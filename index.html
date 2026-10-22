@@ -43,6 +43,7 @@
     background: var(--accent); color: #fff; border: 0; border-radius: 10px;
     padding: 10px 14px; font-size: 15px; cursor: pointer;
   }
+  button:disabled { opacity: 0.6; cursor: wait; }
   button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
   button.small { padding: 4px 10px; font-size: 13px; }
   button.danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
@@ -69,12 +70,13 @@
   .preview { width: 100%; max-height: 180px; object-fit: cover; border-radius: 12px; margin-bottom: 10px; }
   .muted { color: var(--muted); font-size: 13px; }
   .hint { color: var(--muted); font-size: 13px; margin: -6px 0 12px; min-height: 16px; }
-  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 14px; }
   .stat { font-size: 22px; font-weight: 600; }
   .chart-box { position: relative; height: 240px; margin-bottom: 20px; }
   .hidden { display: none !important; }
   .empty { color: var(--muted); font-size: 14px; }
   .error { color: var(--danger); font-size: 14px; }
+  .ok { color: var(--accent); font-size: 14px; }
   dialog {
     background: var(--card); color: var(--ink); border: 1px solid var(--line);
     border-radius: 14px; width: min(92vw, 460px); padding: 18px;
@@ -82,6 +84,9 @@
   dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
   .dialog-buttons { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; }
   .dialog-buttons .right { display: flex; gap: 10px; }
+  @media (max-width: 480px) {
+    .stats { grid-template-columns: 1fr 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -136,18 +141,7 @@
           <label for="pDate">Date bought</label>
           <input id="pDate" type="date" required>
 
-          <div class="row">
-            <div>
-              <label for="pStart">Started using (optional)</label>
-              <input id="pStart" type="date">
-            </div>
-            <div>
-              <label for="pEnd">Finished using (optional)</label>
-              <input id="pEnd" type="date">
-            </div>
-          </div>
-
-          <button type="submit">Save purchase</button>
+          <button type="submit" id="purchaseBtn">Save purchase</button>
           <p id="purchaseMsg" class="muted"></p>
         </form>
       </div>
@@ -165,10 +159,23 @@
         <form id="productForm" autocomplete="off">
           <label for="prName">Name</label>
           <input id="prName" required placeholder="e.g. Oat milk">
-          <label for="prPhoto">Photo (optional)</label>
+
+          <label for="prPhotoFile">Photo (optional)</label>
           <input id="prPhotoFile" type="file" accept="image/*">
           <input id="prPhotoUrl" type="url" placeholder="or paste a picture link">
-          <button type="submit">Add product</button>
+
+          <div class="row">
+            <div>
+              <label for="prStart">Started using (optional)</label>
+              <input id="prStart" type="date">
+            </div>
+            <div>
+              <label for="prEnd">Finished using (optional)</label>
+              <input id="prEnd" type="date">
+            </div>
+          </div>
+
+          <button type="submit" id="productBtn">Add product</button>
           <p id="productMsg" class="muted"></p>
         </form>
       </div>
@@ -195,7 +202,7 @@
             <div class="stat" id="totalQty">0</div>
           </div>
           <div>
-            <div class="muted">Average days used</div>
+            <div class="muted">Days used</div>
             <div class="stat" id="avgDays">—</div>
           </div>
         </div>
@@ -230,20 +237,10 @@
     <input id="epStore" list="storeList">
     <label for="epDate">Date bought</label>
     <input id="epDate" type="date" required>
-    <div class="row">
-      <div>
-        <label for="epStart">Started using</label>
-        <input id="epStart" type="date">
-      </div>
-      <div>
-        <label for="epEnd">Finished using</label>
-        <input id="epEnd" type="date">
-      </div>
-    </div>
     <p id="epMsg" class="error"></p>
     <div class="dialog-buttons">
       <button type="button" class="ghost" id="epCancel">Cancel</button>
-      <button type="submit">Save</button>
+      <button type="submit" id="epSave">Save</button>
     </div>
   </form>
 </dialog>
@@ -258,12 +255,22 @@
     <label for="epPhotoFile">Change photo (optional)</label>
     <input id="epPhotoFile" type="file" accept="image/*">
     <input id="epPhotoUrl" type="url" placeholder="or paste a picture link">
+    <div class="row">
+      <div>
+        <label for="epStart">Started using</label>
+        <input id="epStart" type="date">
+      </div>
+      <div>
+        <label for="epEnd">Finished using</label>
+        <input id="epEnd" type="date">
+      </div>
+    </div>
     <p id="epProductMsg" class="error"></p>
     <div class="dialog-buttons">
-      <button type="button" class="danger" id="deleteProductBtn">Delete product</button>
+      <button type="button" class="danger" id="deleteProductBtn">Delete</button>
       <div class="right">
         <button type="button" class="ghost" id="productCancel">Cancel</button>
-        <button type="submit">Save</button>
+        <button type="submit" id="epProductSave">Save</button>
       </div>
     </div>
   </form>
@@ -277,8 +284,8 @@
   const BUCKET = 'product-photos';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-  let products = [];
-  let purchases = [];
+  let products = [];   // [{id, name, photo_url, start_used, end_used, days_used}]
+  let purchases = [];  // [{id, product_id, quantity, price, supermarket, bought_on, products:{name, photo_url}}]
   let priceChart = null;
   let qtyChart = null;
   let editingPurchaseId = null;
@@ -309,14 +316,43 @@
   function lastPurchaseOf(productId) {
     return purchases.find(x => x.product_id === productId) || null;
   }
-  function checkDates(start, end) {
-    if (start && end && end < start) return 'Finished date can\'t be before the started date.';
+  function datesError(start, end) {
+    if (start && end && end < start) return "Finished date can't be before the started date.";
     return '';
   }
+  function setBusy(btn, busy, text) {
+    btn.disabled = busy;
+    if (busy) { btn.dataset.label = btn.textContent; btn.textContent = text || 'Saving…'; }
+    else if (btn.dataset.label) { btn.textContent = btn.dataset.label; }
+  }
+  function usageText(p) {
+    if (!p.start_used && !p.end_used) return 'Usage not set';
+    const range = p.start_used && p.end_used
+      ? `${formatDate(p.start_used)} to ${formatDate(p.end_used)}`
+      : p.start_used ? `started ${formatDate(p.start_used)}` : `finished ${formatDate(p.end_used)}`;
+    const days = p.days_used ? ` · ${p.days_used} day${p.days_used === 1 ? '' : 's'}` : '';
+    return `Used ${range}${days}`;
+  }
+
+  // Shrink phone photos before upload so they're quick to send
+  async function shrinkImage(file) {
+    const bitmap = await createImageBitmap(file);
+    const max = 900;
+    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close && bitmap.close();
+    return new Promise((resolve, reject) =>
+      canvas.toBlob(b => b ? resolve(b) : reject(new Error('Could not process photo')), 'image/jpeg', 0.85));
+  }
   async function uploadPhoto(file) {
-    const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const path = `${crypto.randomUUID()}-${safe}`;
-    const { error } = await sb.storage.from(BUCKET).upload(path, file, { contentType: file.type, upsert: false });
+    const blob = await shrinkImage(file);
+    const path = `${crypto.randomUUID()}.jpg`;
+    const { error } = await sb.storage.from(BUCKET).upload(path, blob, {
+      contentType: 'image/jpeg', upsert: false
+    });
     if (error) throw error;
     return sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
   }
@@ -344,17 +380,19 @@
     if (error) $('authError').textContent = error.message;
   }
 
+  let loadedOnce = false;
   async function render(session) {
     if (!session) {
       $('signInView').classList.remove('hidden');
       $('appView').classList.add('hidden');
       $('signOutBtn').classList.add('hidden');
+      loadedOnce = false;
       return;
     }
     $('signInView').classList.add('hidden');
     $('appView').classList.remove('hidden');
     $('signOutBtn').classList.remove('hidden');
-    await loadAll();
+    if (!loadedOnce) { loadedOnce = true; await loadAll(); }
   }
 
   // ---------- Tabs ----------
@@ -403,15 +441,6 @@
     $('storeList').innerHTML = stores.map(s => `<option value="${esc(s)}">`).join('');
   }
 
-  function usageText(p) {
-    if (!p.start_used && !p.end_used) return '';
-    const range = p.start_used && p.end_used
-      ? `${formatDate(p.start_used)} to ${formatDate(p.end_used)}`
-      : p.start_used ? `started ${formatDate(p.start_used)}` : `finished ${formatDate(p.end_used)}`;
-    const days = p.days_used ? ` · ${p.days_used} day${p.days_used === 1 ? '' : 's'}` : '';
-    return ` · used ${range}${days}`;
-  }
-
   function renderPurchases() {
     const list = $('purchaseList');
     if (!purchases.length) {
@@ -429,7 +458,7 @@
           ${photo}
           <div class="grow">
             <strong>${esc(name)}</strong>
-            <div class="muted">${formatDate(p.bought_on)}${store} · qty ${Number(p.quantity)}${usageText(p)}</div>
+            <div class="muted">${formatDate(p.bought_on)}${store} · qty ${Number(p.quantity)}</div>
           </div>
           <div class="actions">
             <strong>${money(p.price)}</strong>
@@ -448,13 +477,13 @@
   function renderProducts() {
     const list = $('productList');
     if (!products.length) {
-      list.innerHTML = '<p class="empty">No products yet. Add one above, or just type a new item when you add a purchase.</p>';
+      list.innerHTML = '<p class="empty">No products yet. Add one above, or type a new item when you add a purchase.</p>';
       return;
     }
     list.innerHTML = products.map(p => {
       const count = purchases.filter(x => x.product_id === p.id).length;
       const last = lastPurchaseOf(p.id);
-      const info = last
+      const buys = last
         ? `Bought ${count} time${count === 1 ? '' : 's'} · last ${money(last.price)} on ${formatDate(last.bought_on)}`
         : 'No purchases yet';
       const photo = p.photo_url
@@ -465,7 +494,8 @@
           ${photo}
           <div class="grow">
             <strong>${esc(p.name)}</strong>
-            <div class="muted">${info}</div>
+            <div class="muted">${buys}</div>
+            <div class="muted">${usageText(p)}</div>
           </div>
           <button class="ghost small" data-edit-product="${p.id}">Edit</button>
         </div>`;
@@ -489,55 +519,59 @@
 
   function updateItemHint() {
     const name = $('pItem').value.trim();
-    const p = findProduct(name);
-    const last = p && lastPurchaseOf(p.id);
     if (!name) { $('itemHint').textContent = ''; return; }
+    const p = findProduct(name);
     if (!p) { $('itemHint').textContent = 'New item. It will be added to your products.'; return; }
+    const last = lastPurchaseOf(p.id);
     $('itemHint').textContent = last
-      ? `Last paid ${money(last.price)}${last.supermarket ? ' at ' + last.supermarket : ''} on ${formatDate(last.bought_on)}. Filled in for you, change if needed.`
+      ? `Last paid ${money(last.price)}${last.supermarket ? ' at ' + last.supermarket : ''} on ${formatDate(last.bought_on)}.`
       : 'Existing product. No previous purchases yet.';
   }
 
   $('purchaseForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = $('purchaseMsg');
+    const btn = $('purchaseBtn');
     msg.textContent = '';
     msg.className = 'muted';
-
-    const name = $('pItem').value.trim();
-    const start = $('pStart').value || null;
-    const end = $('pEnd').value || null;
-    const dateErr = checkDates(start, end);
-    if (dateErr) { msg.textContent = dateErr; msg.className = 'error'; return; }
+    setBusy(btn, true);
 
     try {
+      const name = $('pItem').value.trim();
       let product = findProduct(name);
       if (!product) {
         const { data, error } = await sb.from('products').insert({ name }).select().single();
         if (error) throw error;
         product = data;
+        products.push(product);
+        products.sort((a, b) => a.name.localeCompare(b.name));
       }
 
-      const { error } = await sb.from('purchases').insert({
-        product_id: product.id,
-        quantity: Number($('pQty').value),
-        price: Number($('pPrice').value),
-        supermarket: $('pStore').value.trim() || null,
-        bought_on: $('pDate').value,
-        start_used: start,
-        end_used: end
-      });
+      const { data: row, error } = await sb.from('purchases')
+        .insert({
+          product_id: product.id,
+          quantity: Number($('pQty').value),
+          price: Number($('pPrice').value),
+          supermarket: $('pStore').value.trim() || null,
+          bought_on: $('pDate').value
+        })
+        .select('*, products(name, photo_url)')
+        .single();
       if (error) throw error;
 
+      purchases.unshift(row);
       $('purchaseForm').reset();
       $('pQty').value = '1';
       $('pDate').value = todayLocal();
       $('itemHint').textContent = '';
       msg.textContent = 'Saved.';
-      await loadAll();
+      msg.className = 'ok';
+      renderAll();
     } catch (err) {
       msg.textContent = err.message;
       msg.className = 'error';
+    } finally {
+      setBusy(btn, false);
     }
   });
 
@@ -551,8 +585,6 @@
     $('epPrice').value = p.price;
     $('epStore').value = p.supermarket || '';
     $('epDate').value = p.bought_on;
-    $('epStart').value = p.start_used || '';
-    $('epEnd').value = p.end_used || '';
     $('epMsg').textContent = '';
     $('purchaseDialog').showModal();
   }
@@ -561,53 +593,64 @@
 
   $('purchaseEditForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const start = $('epStart').value || null;
-    const end = $('epEnd').value || null;
-    const dateErr = checkDates(start, end);
-    if (dateErr) { $('epMsg').textContent = dateErr; return; }
-
-    const { error } = await sb.from('purchases').update({
+    const btn = $('epSave');
+    setBusy(btn, true);
+    const { data: row, error } = await sb.from('purchases').update({
       quantity: Number($('epQty').value),
       price: Number($('epPrice').value),
       supermarket: $('epStore').value.trim() || null,
-      bought_on: $('epDate').value,
-      start_used: start,
-      end_used: end
-    }).eq('id', editingPurchaseId);
+      bought_on: $('epDate').value
+    }).eq('id', editingPurchaseId).select('*, products(name, photo_url)').single();
+    setBusy(btn, false);
 
     if (error) { $('epMsg').textContent = error.message; return; }
+    purchases = purchases.map(p => p.id === row.id ? row : p);
     $('purchaseDialog').close();
-    await loadAll();
+    renderAll();
   });
 
   async function deletePurchase(id) {
     if (!confirm('Delete this purchase?')) return;
     const { error } = await sb.from('purchases').delete().eq('id', id);
     if (error) { alert(error.message); return; }
-    await loadAll();
+    purchases = purchases.filter(p => p.id !== id);
+    renderAll();
   }
 
   // ---------- Add product ----------
   $('productForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = $('productMsg');
-    msg.textContent = 'Saving…';
+    const btn = $('productBtn');
     msg.className = 'muted';
+    const start = $('prStart').value || null;
+    const end = $('prEnd').value || null;
+    const dErr = datesError(start, end);
+    if (dErr) { msg.textContent = dErr; msg.className = 'error'; return; }
+
+    setBusy(btn, true);
+    msg.textContent = 'Saving…';
     try {
-      const name = $('prName').value.trim();
       const file = $('prPhotoFile').files[0];
       let photo = $('prPhotoUrl').value.trim() || null;
       if (file) photo = await uploadPhoto(file);
 
-      const { error } = await sb.from('products').insert({ name, photo_url: photo });
+      const { data: row, error } = await sb.from('products')
+        .insert({ name: $('prName').value.trim(), photo_url: photo, start_used: start, end_used: end })
+        .select().single();
       if (error) throw error;
 
+      products.push(row);
+      products.sort((a, b) => a.name.localeCompare(b.name));
       $('productForm').reset();
       msg.textContent = 'Product added.';
-      await loadAll();
+      msg.className = 'ok';
+      renderAll();
     } catch (err) {
       msg.textContent = err.message;
       msg.className = 'error';
+    } finally {
+      setBusy(btn, false);
     }
   });
 
@@ -619,6 +662,8 @@
     $('epName').value = p.name;
     $('epPhotoUrl').value = '';
     $('epPhotoFile').value = '';
+    $('epStart').value = p.start_used || '';
+    $('epEnd').value = p.end_used || '';
     $('epProductMsg').textContent = '';
     const preview = $('epPhotoPreview');
     if (p.photo_url) {
@@ -635,8 +680,14 @@
   $('productEditForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = $('epProductMsg');
-    msg.textContent = 'Saving…';
-    msg.className = 'muted';
+    const btn = $('epProductSave');
+    const start = $('epStart').value || null;
+    const end = $('epEnd').value || null;
+    const dErr = datesError(start, end);
+    if (dErr) { msg.textContent = dErr; return; }
+
+    setBusy(btn, true);
+    msg.textContent = '';
     try {
       const current = products.find(x => x.id === editingProductId);
       const file = $('epPhotoFile').files[0];
@@ -645,17 +696,22 @@
       if (file) photo = await uploadPhoto(file);
       else if (url) photo = url;
 
-      const { error } = await sb.from('products').update({
+      const { data: row, error } = await sb.from('products').update({
         name: $('epName').value.trim(),
-        photo_url: photo
-      }).eq('id', editingProductId);
+        photo_url: photo,
+        start_used: start,
+        end_used: end
+      }).eq('id', editingProductId).select().single();
       if (error) throw error;
 
+      products = products.map(p => p.id === row.id ? row : p);
+      products.sort((a, b) => a.name.localeCompare(b.name));
       $('productDialog').close();
-      await loadAll();
+      await loadAll(); // refresh purchase names in case the product was renamed
     } catch (err) {
       msg.textContent = err.message;
-      msg.className = 'error';
+    } finally {
+      setBusy(btn, false);
     }
   });
 
@@ -680,9 +736,10 @@
     $('totalSpent').textContent = money(rows.reduce((s, r) => s + Number(r.price), 0));
     $('totalQty').textContent = rows.reduce((s, r) => s + Number(r.quantity), 0).toString();
 
-    const withDays = rows.filter(r => r.days_used);
+    // Days used: the product's own figure, or the average across products that have one
+    const withDays = products.filter(p => p.days_used && (choice === 'all' || p.id === choice));
     $('avgDays').textContent = withDays.length
-      ? (withDays.reduce((s, r) => s + r.days_used, 0) / withDays.length).toFixed(1)
+      ? (withDays.reduce((s, p) => s + p.days_used, 0) / withDays.length).toFixed(withDays.length > 1 ? 1 : 0)
       : '—';
 
     // Price over time (single product)
