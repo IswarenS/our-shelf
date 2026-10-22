@@ -392,6 +392,7 @@
     $('signInView').classList.add('hidden');
     $('appView').classList.remove('hidden');
     $('signOutBtn').classList.remove('hidden');
+    $('signOutBtn').textContent = 'Sign out (' + session.user.email + ')';
     if (!loadedOnce) { loadedOnce = true; await loadAll(); }
   }
 
