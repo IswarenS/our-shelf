@@ -358,7 +358,7 @@
   }
 
   // ---------- Auth ----------
-  sb.auth.onAuthStateChange((_event, session) => render(session));
+  sb.auth.onAuthStateChange((_event, session) => setTimeout(() => render(session), 0));
 
   async function init() {
     $('signInBtn').addEventListener('click', signIn);
