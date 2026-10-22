@@ -61,16 +61,27 @@
   }
   .item:last-child { border-bottom: 0; }
   .item .grow { flex: 1; min-width: 0; }
+  .item .actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
   .thumb {
     width: 52px; height: 52px; border-radius: 10px; object-fit: cover;
     background: var(--line); flex: none;
   }
+  .preview { width: 100%; max-height: 180px; object-fit: cover; border-radius: 12px; margin-bottom: 10px; }
   .muted { color: var(--muted); font-size: 13px; }
+  .hint { color: var(--muted); font-size: 13px; margin: -6px 0 12px; min-height: 16px; }
   .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
   .stat { font-size: 22px; font-weight: 600; }
   .chart-box { position: relative; height: 240px; margin-bottom: 20px; }
   .hidden { display: none !important; }
   .empty { color: var(--muted); font-size: 14px; }
+  .error { color: var(--danger); font-size: 14px; }
+  dialog {
+    background: var(--card); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 14px; width: min(92vw, 460px); padding: 18px;
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+  .dialog-buttons { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; }
+  .dialog-buttons .right { display: flex; gap: 10px; }
 </style>
 </head>
 <body>
@@ -81,15 +92,15 @@
 </header>
 
 <main>
-  <!-- Sign-in screen -->
+  <!-- Sign-in -->
   <section id="signInView" class="card hidden">
     <h2>Welcome</h2>
     <p class="muted">Sign in with Google to see your shared list.</p>
     <button id="signInBtn">Sign in with Google</button>
-    <p id="authError" class="muted" style="color: var(--danger)"></p>
+    <p id="authError" class="error"></p>
   </section>
 
-  <!-- Main app -->
+  <!-- App -->
   <div id="appView" class="hidden">
     <nav class="tabs">
       <button data-tab="purchases">Purchases</button>
@@ -97,13 +108,15 @@
       <button data-tab="charts" class="off">Charts</button>
     </nav>
 
-    <!-- Purchases -->
+    <!-- PURCHASES -->
     <section id="tab-purchases">
       <div class="card">
         <h2>Add a purchase</h2>
-        <form id="purchaseForm">
-          <label for="pProduct">Product</label>
-          <select id="pProduct" required></select>
+        <form id="purchaseForm" autocomplete="off">
+          <label for="pItem">Item</label>
+          <input id="pItem" list="itemList" placeholder="Type any item, e.g. Oat milk" required>
+          <datalist id="itemList"></datalist>
+          <p id="itemHint" class="hint"></p>
 
           <div class="row">
             <div>
@@ -117,11 +130,22 @@
           </div>
 
           <label for="pStore">Supermarket (optional)</label>
-          <input id="pStore" list="storeList" placeholder="e.g. Tesco" autocomplete="off">
+          <input id="pStore" list="storeList" placeholder="e.g. Tesco">
           <datalist id="storeList"></datalist>
 
-          <label for="pDate">Date</label>
+          <label for="pDate">Date bought</label>
           <input id="pDate" type="date" required>
+
+          <div class="row">
+            <div>
+              <label for="pStart">Started using (optional)</label>
+              <input id="pStart" type="date">
+            </div>
+            <div>
+              <label for="pEnd">Finished using (optional)</label>
+              <input id="pEnd" type="date">
+            </div>
+          </div>
 
           <button type="submit">Save purchase</button>
           <p id="purchaseMsg" class="muted"></p>
@@ -134,15 +158,16 @@
       </div>
     </section>
 
-    <!-- Products -->
+    <!-- PRODUCTS -->
     <section id="tab-products" class="hidden">
       <div class="card">
         <h2>Add a product</h2>
-        <form id="productForm">
+        <form id="productForm" autocomplete="off">
           <label for="prName">Name</label>
           <input id="prName" required placeholder="e.g. Oat milk">
-          <label for="prPhoto">Photo link (optional)</label>
-          <input id="prPhoto" type="url" placeholder="https://...">
+          <label for="prPhoto">Photo (optional)</label>
+          <input id="prPhotoFile" type="file" accept="image/*">
+          <input id="prPhotoUrl" type="url" placeholder="or paste a picture link">
           <button type="submit">Add product</button>
           <p id="productMsg" class="muted"></p>
         </form>
@@ -154,7 +179,7 @@
       </div>
     </section>
 
-    <!-- Charts -->
+    <!-- CHARTS -->
     <section id="tab-charts" class="hidden">
       <div class="card">
         <label for="chartProduct">Show</label>
@@ -169,34 +194,99 @@
             <div class="muted">Total bought</div>
             <div class="stat" id="totalQty">0</div>
           </div>
+          <div>
+            <div class="muted">Average days used</div>
+            <div class="stat" id="avgDays">—</div>
+          </div>
         </div>
 
         <h2 id="priceTitle">Price over time</h2>
-        <div class="chart-box"><canvas id="priceChart"></canvas></div>
+        <div id="priceBox" class="chart-box"><canvas id="priceChart"></canvas></div>
         <p id="priceEmpty" class="empty hidden">Pick a single product to see its price history.</p>
 
         <h2>Bought per month</h2>
-        <div class="chart-box"><canvas id="qtyChart"></canvas></div>
+        <div id="qtyBox" class="chart-box"><canvas id="qtyChart"></canvas></div>
         <p id="qtyEmpty" class="empty hidden">No purchases yet.</p>
       </div>
     </section>
   </div>
 </main>
 
+<!-- Edit purchase dialog -->
+<dialog id="purchaseDialog">
+  <h2 id="epTitle">Edit purchase</h2>
+  <form id="purchaseEditForm" method="dialog">
+    <div class="row">
+      <div>
+        <label for="epQty">Quantity</label>
+        <input id="epQty" type="number" step="any" min="0.01" required>
+      </div>
+      <div>
+        <label for="epPrice">Price (£)</label>
+        <input id="epPrice" type="number" step="0.01" min="0" inputmode="decimal" required>
+      </div>
+    </div>
+    <label for="epStore">Supermarket (optional)</label>
+    <input id="epStore" list="storeList">
+    <label for="epDate">Date bought</label>
+    <input id="epDate" type="date" required>
+    <div class="row">
+      <div>
+        <label for="epStart">Started using</label>
+        <input id="epStart" type="date">
+      </div>
+      <div>
+        <label for="epEnd">Finished using</label>
+        <input id="epEnd" type="date">
+      </div>
+    </div>
+    <p id="epMsg" class="error"></p>
+    <div class="dialog-buttons">
+      <button type="button" class="ghost" id="epCancel">Cancel</button>
+      <button type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Edit product dialog -->
+<dialog id="productDialog">
+  <h2>Edit product</h2>
+  <form id="productEditForm" method="dialog">
+    <img id="epPhotoPreview" class="preview hidden" alt="">
+    <label for="epName">Name</label>
+    <input id="epName" required>
+    <label for="epPhotoFile">Change photo (optional)</label>
+    <input id="epPhotoFile" type="file" accept="image/*">
+    <input id="epPhotoUrl" type="url" placeholder="or paste a picture link">
+    <p id="epProductMsg" class="error"></p>
+    <div class="dialog-buttons">
+      <button type="button" class="danger" id="deleteProductBtn">Delete product</button>
+      <div class="right">
+        <button type="button" class="ghost" id="productCancel">Cancel</button>
+        <button type="submit">Save</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
   const SUPABASE_URL = 'https://djttpfolfccrwdmadarp.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_8zOtpJm8Lv55p_YVRiDXhA_zbXoCULP';
+  const BUCKET = 'product-photos';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   let products = [];
   let purchases = [];
   let priceChart = null;
   let qtyChart = null;
+  let editingPurchaseId = null;
+  let editingProductId = null;
 
   const $ = (id) => document.getElementById(id);
 
+  // ---------- Helpers ----------
   function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -209,7 +299,26 @@
     return d.toISOString().slice(0, 10);
   }
   function formatDate(iso) {
+    if (!iso) return '';
     return new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  function findProduct(name) {
+    const n = name.trim().toLowerCase();
+    return products.find(p => p.name.toLowerCase() === n) || null;
+  }
+  function lastPurchaseOf(productId) {
+    return purchases.find(x => x.product_id === productId) || null;
+  }
+  function checkDates(start, end) {
+    if (start && end && end < start) return 'Finished date can\'t be before the started date.';
+    return '';
+  }
+  async function uploadPhoto(file) {
+    const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `${crypto.randomUUID()}-${safe}`;
+    const { error } = await sb.storage.from(BUCKET).upload(path, file, { contentType: file.type, upsert: false });
+    if (error) throw error;
+    return sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
   }
 
   // ---------- Auth ----------
@@ -250,9 +359,8 @@
 
   // ---------- Tabs ----------
   function showTab(name) {
-    ['purchases', 'products', 'charts'].forEach(t => {
-      $('tab-' + t).classList.toggle('hidden', t !== name);
-    });
+    ['purchases', 'products', 'charts'].forEach(t =>
+      $('tab-' + t).classList.toggle('hidden', t !== name));
     document.querySelectorAll('[data-tab]').forEach(btn =>
       btn.classList.toggle('off', btn.dataset.tab !== name));
     if (name === 'charts') drawCharts();
@@ -274,29 +382,34 @@
   }
 
   function renderAll() {
-    renderProductOptions();
+    renderItemOptions();
     renderStores();
     renderPurchases();
     renderProducts();
+    if (!$('tab-charts').classList.contains('hidden')) drawCharts();
   }
 
-  function renderProductOptions() {
-    const current = $('pProduct').value;
-    $('pProduct').innerHTML = products.length
-      ? products.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')
-      : '<option value="">Add a product first</option>';
-    if (current && products.some(p => p.id === current)) $('pProduct').value = current;
-
-    const chartCurrent = $('chartProduct').value;
+  function renderItemOptions() {
+    $('itemList').innerHTML = products.map(p => `<option value="${esc(p.name)}">`).join('');
+    const current = $('chartProduct').value;
     $('chartProduct').innerHTML =
       '<option value="all">All products</option>' +
       products.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-    if (chartCurrent) $('chartProduct').value = chartCurrent;
+    if (current && (current === 'all' || products.some(p => p.id === current))) $('chartProduct').value = current;
   }
 
   function renderStores() {
     const stores = [...new Set(purchases.map(p => p.supermarket).filter(Boolean))].sort();
     $('storeList').innerHTML = stores.map(s => `<option value="${esc(s)}">`).join('');
+  }
+
+  function usageText(p) {
+    if (!p.start_used && !p.end_used) return '';
+    const range = p.start_used && p.end_used
+      ? `${formatDate(p.start_used)} to ${formatDate(p.end_used)}`
+      : p.start_used ? `started ${formatDate(p.start_used)}` : `finished ${formatDate(p.end_used)}`;
+    const days = p.days_used ? ` · ${p.days_used} day${p.days_used === 1 ? '' : 's'}` : '';
+    return ` · used ${range}${days}`;
   }
 
   function renderPurchases() {
@@ -305,8 +418,8 @@
       list.innerHTML = '<p class="empty">No purchases yet. Add one above.</p>';
       return;
     }
-    list.innerHTML = purchases.slice(0, 50).map(p => {
-      const name = p.products ? p.products.name : 'Unknown product';
+    list.innerHTML = purchases.slice(0, 100).map(p => {
+      const name = p.products ? p.products.name : 'Unknown item';
       const photo = p.products && p.products.photo_url
         ? `<img class="thumb" src="${esc(p.products.photo_url)}" alt="">`
         : '<div class="thumb"></div>';
@@ -316,33 +429,37 @@
           ${photo}
           <div class="grow">
             <strong>${esc(name)}</strong>
-            <div class="muted">${formatDate(p.bought_on)}${store} · qty ${Number(p.quantity)}</div>
+            <div class="muted">${formatDate(p.bought_on)}${store} · qty ${Number(p.quantity)}${usageText(p)}</div>
           </div>
-          <div>
-            <div><strong>${money(p.price)}</strong></div>
-            <button class="danger small" data-delete="${p.id}">Delete</button>
+          <div class="actions">
+            <strong>${money(p.price)}</strong>
+            <button class="ghost small" data-edit-purchase="${p.id}">Edit</button>
+            <button class="danger small" data-delete-purchase="${p.id}">Delete</button>
           </div>
         </div>`;
     }).join('');
 
-    list.querySelectorAll('[data-delete]').forEach(btn =>
-      btn.addEventListener('click', () => deletePurchase(btn.dataset.delete)));
+    list.querySelectorAll('[data-edit-purchase]').forEach(btn =>
+      btn.addEventListener('click', () => openPurchaseEdit(btn.dataset.editPurchase)));
+    list.querySelectorAll('[data-delete-purchase]').forEach(btn =>
+      btn.addEventListener('click', () => deletePurchase(btn.dataset.deletePurchase)));
   }
 
   function renderProducts() {
     const list = $('productList');
     if (!products.length) {
-      list.innerHTML = '<p class="empty">No products yet.</p>';
+      list.innerHTML = '<p class="empty">No products yet. Add one above, or just type a new item when you add a purchase.</p>';
       return;
     }
     list.innerHTML = products.map(p => {
-      const latest = purchases.find(x => x.product_id === p.id);
+      const count = purchases.filter(x => x.product_id === p.id).length;
+      const last = lastPurchaseOf(p.id);
+      const info = last
+        ? `Bought ${count} time${count === 1 ? '' : 's'} · last ${money(last.price)} on ${formatDate(last.bought_on)}`
+        : 'No purchases yet';
       const photo = p.photo_url
         ? `<img class="thumb" src="${esc(p.photo_url)}" alt="">`
         : '<div class="thumb"></div>';
-      const info = latest
-        ? `Last paid ${money(latest.price)} on ${formatDate(latest.bought_on)}`
-        : 'No purchases yet';
       return `
         <div class="item">
           ${photo}
@@ -350,39 +467,116 @@
             <strong>${esc(p.name)}</strong>
             <div class="muted">${info}</div>
           </div>
+          <button class="ghost small" data-edit-product="${p.id}">Edit</button>
         </div>`;
     }).join('');
+
+    list.querySelectorAll('[data-edit-product]').forEach(btn =>
+      btn.addEventListener('click', () => openProductEdit(btn.dataset.editProduct)));
   }
 
-  // ---------- Forms ----------
-  $('productForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = $('prName').value.trim();
-    const photo = $('prPhoto').value.trim() || null;
-    const { error } = await sb.from('products').insert({ name, photo_url: photo });
-    if (error) { $('productMsg').textContent = error.message; return; }
-    $('productForm').reset();
-    $('productMsg').textContent = 'Product added.';
-    await loadAll();
+  // ---------- Add purchase ----------
+  $('pItem').addEventListener('input', updateItemHint);
+  $('pItem').addEventListener('change', () => {
+    const p = findProduct($('pItem').value);
+    const last = p && lastPurchaseOf(p.id);
+    if (last) {
+      $('pPrice').value = last.price;
+      $('pStore').value = last.supermarket || '';
+    }
+    updateItemHint();
   });
+
+  function updateItemHint() {
+    const name = $('pItem').value.trim();
+    const p = findProduct(name);
+    const last = p && lastPurchaseOf(p.id);
+    if (!name) { $('itemHint').textContent = ''; return; }
+    if (!p) { $('itemHint').textContent = 'New item. It will be added to your products.'; return; }
+    $('itemHint').textContent = last
+      ? `Last paid ${money(last.price)}${last.supermarket ? ' at ' + last.supermarket : ''} on ${formatDate(last.bought_on)}. Filled in for you, change if needed.`
+      : 'Existing product. No previous purchases yet.';
+  }
 
   $('purchaseForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (!products.length) { $('purchaseMsg').textContent = 'Add a product first.'; return; }
-    const row = {
-      product_id: $('pProduct').value,
-      quantity: Number($('pQty').value),
-      price: Number($('pPrice').value),
-      supermarket: $('pStore').value.trim() || null,
-      bought_on: $('pDate').value
-    };
-    const { error } = await sb.from('purchases').insert(row);
-    if (error) { $('purchaseMsg').textContent = error.message; return; }
-    $('pPrice').value = '';
-    $('pStore').value = '';
-    $('pQty').value = '1';
-    $('pDate').value = todayLocal();
-    $('purchaseMsg').textContent = 'Saved.';
+    const msg = $('purchaseMsg');
+    msg.textContent = '';
+    msg.className = 'muted';
+
+    const name = $('pItem').value.trim();
+    const start = $('pStart').value || null;
+    const end = $('pEnd').value || null;
+    const dateErr = checkDates(start, end);
+    if (dateErr) { msg.textContent = dateErr; msg.className = 'error'; return; }
+
+    try {
+      let product = findProduct(name);
+      if (!product) {
+        const { data, error } = await sb.from('products').insert({ name }).select().single();
+        if (error) throw error;
+        product = data;
+      }
+
+      const { error } = await sb.from('purchases').insert({
+        product_id: product.id,
+        quantity: Number($('pQty').value),
+        price: Number($('pPrice').value),
+        supermarket: $('pStore').value.trim() || null,
+        bought_on: $('pDate').value,
+        start_used: start,
+        end_used: end
+      });
+      if (error) throw error;
+
+      $('purchaseForm').reset();
+      $('pQty').value = '1';
+      $('pDate').value = todayLocal();
+      $('itemHint').textContent = '';
+      msg.textContent = 'Saved.';
+      await loadAll();
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.className = 'error';
+    }
+  });
+
+  // ---------- Edit / delete purchase ----------
+  function openPurchaseEdit(id) {
+    const p = purchases.find(x => x.id === id);
+    if (!p) return;
+    editingPurchaseId = id;
+    $('epTitle').textContent = p.products ? p.products.name : 'Edit purchase';
+    $('epQty').value = p.quantity;
+    $('epPrice').value = p.price;
+    $('epStore').value = p.supermarket || '';
+    $('epDate').value = p.bought_on;
+    $('epStart').value = p.start_used || '';
+    $('epEnd').value = p.end_used || '';
+    $('epMsg').textContent = '';
+    $('purchaseDialog').showModal();
+  }
+
+  $('epCancel').addEventListener('click', () => $('purchaseDialog').close());
+
+  $('purchaseEditForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const start = $('epStart').value || null;
+    const end = $('epEnd').value || null;
+    const dateErr = checkDates(start, end);
+    if (dateErr) { $('epMsg').textContent = dateErr; return; }
+
+    const { error } = await sb.from('purchases').update({
+      quantity: Number($('epQty').value),
+      price: Number($('epPrice').value),
+      supermarket: $('epStore').value.trim() || null,
+      bought_on: $('epDate').value,
+      start_used: start,
+      end_used: end
+    }).eq('id', editingPurchaseId);
+
+    if (error) { $('epMsg').textContent = error.message; return; }
+    $('purchaseDialog').close();
     await loadAll();
   });
 
@@ -392,6 +586,88 @@
     if (error) { alert(error.message); return; }
     await loadAll();
   }
+
+  // ---------- Add product ----------
+  $('productForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = $('productMsg');
+    msg.textContent = 'Saving…';
+    msg.className = 'muted';
+    try {
+      const name = $('prName').value.trim();
+      const file = $('prPhotoFile').files[0];
+      let photo = $('prPhotoUrl').value.trim() || null;
+      if (file) photo = await uploadPhoto(file);
+
+      const { error } = await sb.from('products').insert({ name, photo_url: photo });
+      if (error) throw error;
+
+      $('productForm').reset();
+      msg.textContent = 'Product added.';
+      await loadAll();
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.className = 'error';
+    }
+  });
+
+  // ---------- Edit / delete product ----------
+  function openProductEdit(id) {
+    const p = products.find(x => x.id === id);
+    if (!p) return;
+    editingProductId = id;
+    $('epName').value = p.name;
+    $('epPhotoUrl').value = '';
+    $('epPhotoFile').value = '';
+    $('epProductMsg').textContent = '';
+    const preview = $('epPhotoPreview');
+    if (p.photo_url) {
+      preview.src = p.photo_url;
+      preview.classList.remove('hidden');
+    } else {
+      preview.classList.add('hidden');
+    }
+    $('productDialog').showModal();
+  }
+
+  $('productCancel').addEventListener('click', () => $('productDialog').close());
+
+  $('productEditForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = $('epProductMsg');
+    msg.textContent = 'Saving…';
+    msg.className = 'muted';
+    try {
+      const current = products.find(x => x.id === editingProductId);
+      const file = $('epPhotoFile').files[0];
+      const url = $('epPhotoUrl').value.trim();
+      let photo = current.photo_url;
+      if (file) photo = await uploadPhoto(file);
+      else if (url) photo = url;
+
+      const { error } = await sb.from('products').update({
+        name: $('epName').value.trim(),
+        photo_url: photo
+      }).eq('id', editingProductId);
+      if (error) throw error;
+
+      $('productDialog').close();
+      await loadAll();
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.className = 'error';
+    }
+  });
+
+  $('deleteProductBtn').addEventListener('click', async () => {
+    const p = products.find(x => x.id === editingProductId);
+    const count = purchases.filter(x => x.product_id === editingProductId).length;
+    if (!confirm(`Delete "${p.name}"${count ? ` and its ${count} purchase${count === 1 ? '' : 's'}` : ''}?`)) return;
+    const { error } = await sb.from('products').delete().eq('id', editingProductId);
+    if (error) { $('epProductMsg').textContent = error.message; return; }
+    $('productDialog').close();
+    await loadAll();
+  });
 
   // ---------- Charts ----------
   function drawCharts() {
@@ -404,15 +680,20 @@
     $('totalSpent').textContent = money(rows.reduce((s, r) => s + Number(r.price), 0));
     $('totalQty').textContent = rows.reduce((s, r) => s + Number(r.quantity), 0).toString();
 
-    // Price over time (single product only)
-    if (priceChart) priceChart.destroy();
+    const withDays = rows.filter(r => r.days_used);
+    $('avgDays').textContent = withDays.length
+      ? (withDays.reduce((s, r) => s + r.days_used, 0) / withDays.length).toFixed(1)
+      : '—';
+
+    // Price over time (single product)
+    if (priceChart) { priceChart.destroy(); priceChart = null; }
     if (choice === 'all') {
       $('priceTitle').classList.add('hidden');
-      $('priceChart').parentElement.classList.add('hidden');
+      $('priceBox').classList.add('hidden');
       $('priceEmpty').classList.remove('hidden');
     } else {
       $('priceTitle').classList.remove('hidden');
-      $('priceChart').parentElement.classList.remove('hidden');
+      $('priceBox').classList.remove('hidden');
       $('priceEmpty').classList.add('hidden');
       priceChart = new Chart($('priceChart'), {
         type: 'line',
@@ -430,8 +711,8 @@
       });
     }
 
-    // Quantity bought per month
-    if (qtyChart) qtyChart.destroy();
+    // Quantity per month
+    if (qtyChart) { qtyChart.destroy(); qtyChart = null; }
     const byMonth = {};
     rows.forEach(r => {
       const key = r.bought_on.slice(0, 7);
@@ -439,7 +720,7 @@
     });
     const months = Object.keys(byMonth).sort();
     $('qtyEmpty').classList.toggle('hidden', months.length > 0);
-    $('qtyChart').parentElement.classList.toggle('hidden', months.length === 0);
+    $('qtyBox').classList.toggle('hidden', months.length === 0);
     if (months.length) {
       qtyChart = new Chart($('qtyChart'), {
         type: 'bar',
