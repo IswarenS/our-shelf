@@ -416,8 +416,14 @@
   }
   function setBusy(btn, busy, text) {
     btn.disabled = busy;
-    if (busy) { btn.dataset.label = btn.textContent; btn.textContent = text || 'Saving…'; }
-    else if (btn.dataset.label) { btn.textContent = btn.dataset.label; }
+    clearTimeout(btn._slow);
+    if (busy) {
+      btn.dataset.label = btn.textContent;
+      btn.textContent = text || 'Saving…';
+      btn._slow = setTimeout(() => { btn.textContent = 'Still saving… check connection'; }, 5000);
+    } else if (btn.dataset.label) {
+      btn.textContent = btn.dataset.label;
+    }
   }
   function usageText(p) {
     if (!p.start_used && !p.end_used) return 'Usage not set';
@@ -586,26 +592,35 @@
 
   // ---------- Data ----------
   async function loadAll() {
-    const [p, c, s] = await Promise.all([
+    const [p, c] = await Promise.all([
       sb.from('products').select('*').order('name'),
-      sb.from('purchases').select('*, products(name, photo_url)').order('bought_on', { ascending: false }),
-      sb.from('shops').select('*').order('name')
+      sb.from('purchases').select('*, products(name, photo_url)').order('bought_on', { ascending: false })
     ]);
-    if (p.error || c.error || s.error) {
-      alert('Could not load data: ' + (p.error || c.error || s.error).message);
+    if (p.error || c.error) {
+      alert('Could not load data: ' + (p.error || c.error).message);
       return;
     }
     products = p.data;
     purchases = c.data;
+
+    // Shops are loaded separately, so a problem here won't hide products and purchases
+    const s = await sb.from('shops').select('*').order('name');
+    if (s.error) {
+      renderAll();
+      $('shopList').innerHTML = '<p class="error">Shops could not load. Run the Shops SQL in Supabase, then refresh.</p>';
+      return;
+    }
     shops = s.data;
 
     // Any shop name already used in a purchase gets added to the Shops list
     const missing = [...new Set(purchases.map(x => x.supermarket).filter(Boolean))]
       .filter(n => !shops.some(sh => sh.name === n));
     if (missing.length) {
-      await sb.from('shops').upsert(missing.map(name => ({ name })), { onConflict: 'name', ignoreDuplicates: true });
-      const again = await sb.from('shops').select('*').order('name');
-      if (!again.error) shops = again.data;
+      const up = await sb.from('shops').upsert(missing.map(name => ({ name })), { onConflict: 'name', ignoreDuplicates: true });
+      if (!up.error) {
+        const again = await sb.from('shops').select('*').order('name');
+        if (!again.error) shops = again.data;
+      }
     }
     renderAll();
   }
@@ -997,11 +1012,6 @@
         .single();
       if (error) throw error;
 
-      if (shopName && !shops.some(s => s.name === shopName)) {
-        const { data: shopRow } = await sb.from('shops').insert({ name: shopName }).select().single();
-        if (shopRow) shops.push(shopRow);
-      }
-
       purchases.unshift(row);
       $('purchaseForm').reset();
       $('pQty').value = '1';
@@ -1010,6 +1020,12 @@
       msg.textContent = 'Saved.';
       msg.className = 'ok';
       renderAll();
+
+      // Add a new shop name to the Shops list in the background, without making the save wait
+      if (shopName && !shops.some(s => s.name === shopName)) {
+        sb.from('shops').insert({ name: shopName }).select().single()
+          .then(({ data: shopRow }) => { if (shopRow) { shops.push(shopRow); renderAll(); } });
+      }
     } catch (err) {
       msg.textContent = err.message;
       msg.className = 'error';
