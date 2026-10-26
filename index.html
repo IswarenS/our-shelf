@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Our Shelf">
 <title>Our Shelf</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
   :root {
     --bg: #f6f4ef; --card: #ffffff; --ink: #1d1d1b; --muted: #6b6b66;
@@ -40,13 +41,14 @@
     background: var(--card); border: 1px solid var(--line);
     border-radius: 14px; padding: 16px; margin-bottom: 14px;
   }
-  button {
+  button, .btnlink {
     background: var(--accent); color: #fff; border: 0; border-radius: 10px;
-    padding: 10px 14px; font-size: 15px; cursor: pointer;
+    padding: 10px 14px; font-size: 15px; cursor: pointer; text-decoration: none;
+    display: inline-block;
   }
   button:disabled { opacity: 0.6; cursor: wait; }
-  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
-  button.small { padding: 4px 10px; font-size: 13px; }
+  button.ghost, .btnlink.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button.small, .btnlink.small { padding: 4px 10px; font-size: 13px; }
   button.danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
   input, select {
     width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 10px;
@@ -88,6 +90,8 @@
     background: var(--accent); color: #fff; margin-left: 6px; vertical-align: middle;
   }
   .price-big { font-size: 20px; font-weight: 600; }
+  .result { display: block; width: 100%; text-align: left; margin-bottom: 6px; font-size: 14px; }
+  #map { height: 420px; border-radius: 12px; margin-bottom: 8px; }
   dialog {
     background: var(--card); color: var(--ink); border: 1px solid var(--line);
     border-radius: 14px; width: min(92vw, 460px); padding: 18px; max-height: 88vh; overflow-y: auto;
@@ -121,6 +125,8 @@
     <nav class="tabs">
       <button data-tab="purchases">Purchases</button>
       <button data-tab="products" class="off">Products</button>
+      <button data-tab="shops" class="off">Shops</button>
+      <button data-tab="map" class="off">Map</button>
       <button data-tab="charts" class="off">Charts</button>
     </nav>
 
@@ -145,8 +151,8 @@
             </div>
           </div>
 
-          <label for="pStore">Supermarket (optional)</label>
-          <input id="pStore" list="storeList" placeholder="e.g. Intermart">
+          <label for="pStore">Shop (optional)</label>
+          <input id="pStore" list="storeList" placeholder="Pick or type a shop">
           <datalist id="storeList"></datalist>
 
           <label for="pDate">Date bought</label>
@@ -198,6 +204,41 @@
       </div>
     </section>
 
+    <!-- SHOPS -->
+    <section id="tab-shops" class="hidden">
+      <div class="card">
+        <h2>Add a shop</h2>
+        <form id="shopForm" autocomplete="off">
+          <label for="shName">Shop name</label>
+          <input id="shName" required placeholder="e.g. Intermart">
+          <label for="shArea">Area (optional)</label>
+          <input id="shArea" placeholder="e.g. Bagatelle">
+          <button type="button" id="shSearch" class="ghost">Find on map</button>
+          <p id="shPicked" class="muted"></p>
+          <div id="shResults"></div>
+          <p id="shMsg" class="muted"></p>
+          <button type="submit" id="shSave">Save shop</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Your shops</h2>
+        <div id="shopList"></div>
+      </div>
+    </section>
+
+    <!-- MAP -->
+    <section id="tab-map" class="hidden">
+      <div class="card">
+        <div id="map"></div>
+        <p class="muted">Each pin is a shop with a location. Tap a pin to see what you've spent there.</p>
+      </div>
+      <div class="card">
+        <h2>Not on the map yet</h2>
+        <div id="noLocList"></div>
+      </div>
+    </section>
+
     <!-- CHARTS -->
     <section id="tab-charts" class="hidden">
       <div class="card">
@@ -240,6 +281,28 @@
   </div>
 </dialog>
 
+<!-- Edit shop dialog -->
+<dialog id="shopDialog">
+  <h2>Edit shop</h2>
+  <form id="shopEditForm" method="dialog">
+    <label for="esName">Shop name</label>
+    <input id="esName" required>
+    <label for="esArea">Area (optional)</label>
+    <input id="esArea">
+    <button type="button" id="esSearch" class="ghost">Find on map</button>
+    <p id="esPicked" class="muted"></p>
+    <div id="esResults"></div>
+    <p id="esMsg" class="error"></p>
+    <div class="dialog-buttons">
+      <button type="button" class="danger" id="esDelete">Delete</button>
+      <div class="right">
+        <button type="button" class="ghost" id="esCancel">Cancel</button>
+        <button type="submit" id="esSave">Save</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
 <!-- Edit purchase dialog -->
 <dialog id="purchaseDialog">
   <h2 id="epTitle">Edit purchase</h2>
@@ -254,7 +317,7 @@
         <input id="epPrice" type="number" step="0.01" min="0" inputmode="decimal" required>
       </div>
     </div>
-    <label for="epStore">Supermarket (optional)</label>
+    <label for="epStore">Shop (optional)</label>
     <input id="epStore" list="storeList">
     <label for="epDate">Date bought</label>
     <input id="epDate" type="date" required>
@@ -299,18 +362,26 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
   const SUPABASE_URL = 'https://djttpfolfccrwdmadarp.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_8zOtpJm8Lv55p_YVRiDXhA_zbXoCULP';
   const BUCKET = 'product-photos';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+  const MAURITIUS_CENTRE = [-20.2, 57.55];
+
   let products = [];   // [{id, name, photo_url, start_used, end_used, days_used}]
   let purchases = [];  // [{id, product_id, quantity, price, supermarket, bought_on, products:{name, photo_url}}]
+  let shops = [];      // [{id, name, area, lat, lng}]
   let priceChart = null;
   let qtyChart = null;
+  let map = null;
+  let markersLayer = null;
   let editingPurchaseId = null;
   let editingProductId = null;
+  let editingShopId = null;
+  let lastSearchAt = 0;
 
   const $ = (id) => document.getElementById(id);
 
@@ -356,6 +427,17 @@
     const days = p.days_used ? ` · ${p.days_used} day${p.days_used === 1 ? '' : 's'}` : '';
     return `Used ${range}${days}`;
   }
+  function shopStats(name) {
+    const rows = purchases.filter(p => p.supermarket === name);
+    return { count: rows.length, total: rows.reduce((s, r) => s + Number(r.price), 0) };
+  }
+  function mapLink(shop) {
+    if (shop.lat != null && shop.lng != null) {
+      return `https://www.google.com/maps/search/?api=1&query=${shop.lat},${shop.lng}`;
+    }
+    const q = [shop.name, shop.area, 'Mauritius'].filter(Boolean).join(' ');
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+  }
 
   // Shrink phone photos before upload so they're quick to send
   async function shrinkImage(file) {
@@ -379,6 +461,79 @@
     if (error) throw error;
     return sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
   }
+
+  // ---------- Location search (OpenStreetMap Nominatim) ----------
+  // Free, no key. Usage policy asks for at most one search per second,
+  // so we space requests out and only search when the button is pressed.
+  async function findPlaces(query) {
+    const wait = 1100 - (Date.now() - lastSearchAt);
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    lastSearchAt = Date.now();
+    const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=mu&q='
+      + encodeURIComponent(query);
+    const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    if (!res.ok) throw new Error('Map search failed. Try again in a moment.');
+    return res.json();
+  }
+
+  function makePicker({ nameId, areaId, btnId, resultsId, pickedId, msgId }) {
+    const state = { picked: null };
+    const btn = $(btnId), results = $(resultsId), picked = $(pickedId), msg = $(msgId);
+
+    function showPicked() {
+      picked.textContent = state.picked
+        ? `Location set (${state.picked.lat.toFixed(4)}, ${state.picked.lng.toFixed(4)})`
+        : 'No location set yet.';
+    }
+
+    btn.addEventListener('click', async () => {
+      const name = $(nameId).value.trim();
+      const area = $(areaId).value.trim();
+      msg.textContent = '';
+      if (!name) { msg.textContent = 'Type a shop name first.'; msg.className = 'error'; return; }
+
+      setBusy(btn, true, 'Searching…');
+      results.innerHTML = '';
+      try {
+        let found = await findPlaces([name, area, 'Mauritius'].filter(Boolean).join(' '));
+        if (!found.length && area) found = await findPlaces(`${name} Mauritius`);
+
+        if (!found.length) {
+          results.innerHTML = '<p class="muted">No matches. Try another spelling, or add an area.</p>';
+        } else {
+          results.innerHTML = found.map((r, i) =>
+            `<button type="button" class="ghost result" data-i="${i}">${esc(r.display_name.slice(0, 100))}</button>`
+          ).join('');
+          results.querySelectorAll('.result').forEach(b => b.addEventListener('click', () => {
+            const r = found[Number(b.dataset.i)];
+            state.picked = { lat: Number(r.lat), lng: Number(r.lon) };
+            results.innerHTML = '';
+            showPicked();
+          }));
+        }
+      } catch (err) {
+        msg.textContent = err.message;
+        msg.className = 'error';
+      } finally {
+        setBusy(btn, false);
+      }
+    });
+
+    return {
+      get: () => state.picked,
+      set(p) { state.picked = p; showPicked(); },
+      clear() { state.picked = null; results.innerHTML = ''; showPicked(); }
+    };
+  }
+
+  const addPicker = makePicker({
+    nameId: 'shName', areaId: 'shArea', btnId: 'shSearch',
+    resultsId: 'shResults', pickedId: 'shPicked', msgId: 'shMsg'
+  });
+  const editPicker = makePicker({
+    nameId: 'esName', areaId: 'esArea', btnId: 'esSearch',
+    resultsId: 'esResults', pickedId: 'esPicked', msgId: 'esMsg'
+  });
 
   // ---------- Auth ----------
   sb.auth.onAuthStateChange((_event, session) => render(session));
@@ -420,26 +575,38 @@
   }
 
   // ---------- Tabs ----------
+  const TABS = ['purchases', 'products', 'shops', 'map', 'charts'];
   function showTab(name) {
-    ['purchases', 'products', 'charts'].forEach(t =>
-      $('tab-' + t).classList.toggle('hidden', t !== name));
+    TABS.forEach(t => $('tab-' + t).classList.toggle('hidden', t !== name));
     document.querySelectorAll('[data-tab]').forEach(btn =>
       btn.classList.toggle('off', btn.dataset.tab !== name));
     if (name === 'charts') drawCharts();
+    if (name === 'map') renderMap();
   }
 
   // ---------- Data ----------
   async function loadAll() {
-    const [p, c] = await Promise.all([
+    const [p, c, s] = await Promise.all([
       sb.from('products').select('*').order('name'),
-      sb.from('purchases').select('*, products(name, photo_url)').order('bought_on', { ascending: false })
+      sb.from('purchases').select('*, products(name, photo_url)').order('bought_on', { ascending: false }),
+      sb.from('shops').select('*').order('name')
     ]);
-    if (p.error || c.error) {
-      alert('Could not load data: ' + (p.error || c.error).message);
+    if (p.error || c.error || s.error) {
+      alert('Could not load data: ' + (p.error || c.error || s.error).message);
       return;
     }
     products = p.data;
     purchases = c.data;
+    shops = s.data;
+
+    // Any shop name already used in a purchase gets added to the Shops list
+    const missing = [...new Set(purchases.map(x => x.supermarket).filter(Boolean))]
+      .filter(n => !shops.some(sh => sh.name === n));
+    if (missing.length) {
+      await sb.from('shops').upsert(missing.map(name => ({ name })), { onConflict: 'name', ignoreDuplicates: true });
+      const again = await sb.from('shops').select('*').order('name');
+      if (!again.error) shops = again.data;
+    }
     renderAll();
   }
 
@@ -448,6 +615,8 @@
     renderStores();
     renderPurchases();
     renderProducts();
+    renderShops();
+    if (!$('tab-map').classList.contains('hidden')) renderMap();
     if (!$('tab-charts').classList.contains('hidden')) drawCharts();
   }
 
@@ -461,8 +630,8 @@
   }
 
   function renderStores() {
-    const stores = [...new Set(purchases.map(p => p.supermarket).filter(Boolean))].sort();
-    $('storeList').innerHTML = stores.map(s => `<option value="${esc(s)}">`).join('');
+    const names = [...new Set([...shops.map(s => s.name), ...purchases.map(p => p.supermarket).filter(Boolean)])].sort();
+    $('storeList').innerHTML = names.map(n => `<option value="${esc(n)}">`).join('');
   }
 
   function renderPurchases() {
@@ -531,6 +700,176 @@
       btn.addEventListener('click', () => openProductEdit(btn.dataset.editProduct)));
   }
 
+  // ---------- Shops ----------
+  function renderShops() {
+    const list = $('shopList');
+    if (!shops.length) {
+      list.innerHTML = '<p class="empty">No shops yet. Add one above.</p>';
+      return;
+    }
+    list.innerHTML = shops.map(s => {
+      const st = shopStats(s.name);
+      const where = s.lat != null ? 'On the map' : 'No location yet';
+      return `
+        <div class="item">
+          <div class="grow">
+            <strong>${esc(s.name)}</strong>
+            ${s.area ? `<div class="muted">${esc(s.area)}</div>` : ''}
+            <div class="muted">${where} · ${st.count} purchase${st.count === 1 ? '' : 's'} · ${money(st.total)}</div>
+          </div>
+          <div class="actions">
+            <a class="btnlink ghost small" href="${mapLink(s)}" target="_blank" rel="noopener">Google Maps</a>
+            <button class="ghost small" data-edit-shop="${s.id}">Edit</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    list.querySelectorAll('[data-edit-shop]').forEach(btn =>
+      btn.addEventListener('click', () => openShopEdit(btn.dataset.editShop)));
+  }
+
+  $('shopForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = $('shMsg');
+    const btn = $('shSave');
+    msg.textContent = '';
+    msg.className = 'muted';
+    const name = $('shName').value.trim();
+    const area = $('shArea').value.trim() || null;
+    const loc = addPicker.get();
+
+    if (shops.some(s => s.name.toLowerCase() === name.toLowerCase())) {
+      msg.textContent = 'You already have a shop with that name.';
+      msg.className = 'error';
+      return;
+    }
+
+    setBusy(btn, true);
+    try {
+      const { data: row, error } = await sb.from('shops')
+        .insert({ name, area, lat: loc ? loc.lat : null, lng: loc ? loc.lng : null })
+        .select().single();
+      if (error) throw error;
+      shops.push(row);
+      shops.sort((a, b) => a.name.localeCompare(b.name));
+      $('shopForm').reset();
+      addPicker.clear();
+      msg.textContent = 'Shop saved.';
+      msg.className = 'ok';
+      renderAll();
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.className = 'error';
+    } finally {
+      setBusy(btn, false);
+    }
+  });
+
+  function openShopEdit(id) {
+    const s = shops.find(x => x.id === id);
+    if (!s) return;
+    editingShopId = id;
+    $('esName').value = s.name;
+    $('esArea').value = s.area || '';
+    $('esMsg').textContent = '';
+    $('esResults').innerHTML = '';
+    editPicker.clear();
+    if (s.lat != null && s.lng != null) editPicker.set({ lat: s.lat, lng: s.lng });
+    $('shopDialog').showModal();
+  }
+
+  $('esCancel').addEventListener('click', () => $('shopDialog').close());
+
+  $('shopEditForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = $('esMsg');
+    const btn = $('esSave');
+    const current = shops.find(x => x.id === editingShopId);
+    const newName = $('esName').value.trim();
+    const loc = editPicker.get() || { lat: current.lat, lng: current.lng };
+
+    if (shops.some(s => s.id !== editingShopId && s.name.toLowerCase() === newName.toLowerCase())) {
+      msg.textContent = 'You already have a shop with that name.';
+      return;
+    }
+
+    setBusy(btn, true);
+    msg.textContent = '';
+    try {
+      const { error } = await sb.from('shops').update({
+        name: newName,
+        area: $('esArea').value.trim() || null,
+        lat: loc.lat ?? null,
+        lng: loc.lng ?? null
+      }).eq('id', editingShopId);
+      if (error) throw error;
+
+      // Keep past purchases attached to the renamed shop
+      if (newName !== current.name) {
+        const { error: pErr } = await sb.from('purchases')
+          .update({ supermarket: newName }).eq('supermarket', current.name);
+        if (pErr) throw pErr;
+      }
+      $('shopDialog').close();
+      await loadAll();
+    } catch (err) {
+      msg.textContent = err.message;
+    } finally {
+      setBusy(btn, false);
+    }
+  });
+
+  $('esDelete').addEventListener('click', async () => {
+    const s = shops.find(x => x.id === editingShopId);
+    const used = purchases.filter(p => p.supermarket === s.name).length;
+    if (used) {
+      $('esMsg').textContent = `This shop has ${used} purchase${used === 1 ? '' : 's'}, so it can't be removed. You can rename it instead.`;
+      return;
+    }
+    if (!confirm(`Remove "${s.name}" from your shops?`)) return;
+    const { error } = await sb.from('shops').delete().eq('id', editingShopId);
+    if (error) { $('esMsg').textContent = error.message; return; }
+    $('shopDialog').close();
+    await loadAll();
+  });
+
+  // ---------- Map ----------
+  function renderMap() {
+    if (!map) {
+      map = L.map('map').setView(MAURITIUS_CENTRE, 10);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+      markersLayer = L.layerGroup().addTo(map);
+    }
+    map.invalidateSize();
+    markersLayer.clearLayers();
+
+    const pinned = shops.filter(s => s.lat != null && s.lng != null);
+    pinned.forEach(s => {
+      const st = shopStats(s.name);
+      const popup = `
+        <strong>${esc(s.name)}</strong>${s.area ? '<br>' + esc(s.area) : ''}<br>
+        ${st.count} purchase${st.count === 1 ? '' : 's'} · ${money(st.total)} spent<br>
+        <a href="${mapLink(s)}" target="_blank" rel="noopener">Open in Google Maps</a>`;
+      L.marker([s.lat, s.lng]).addTo(markersLayer).bindPopup(popup);
+    });
+
+    if (pinned.length === 1) {
+      map.setView([pinned[0].lat, pinned[0].lng], 14);
+    } else if (pinned.length > 1) {
+      map.fitBounds(L.latLngBounds(pinned.map(s => [s.lat, s.lng])).pad(0.2));
+    }
+
+    const unpinned = shops.filter(s => s.lat == null || s.lng == null);
+    $('noLocList').innerHTML = unpinned.length
+      ? unpinned.map(s => `<div class="item"><div class="grow"><strong>${esc(s.name)}</strong>${s.area ? `<div class="muted">${esc(s.area)}</div>` : ''}</div><button class="ghost small" data-edit-shop="${s.id}">Add location</button></div>`).join('')
+      : '<p class="empty">Every shop is on the map.</p>';
+    $('noLocList').querySelectorAll('[data-edit-shop]').forEach(btn =>
+      btn.addEventListener('click', () => openShopEdit(btn.dataset.editShop)));
+  }
+
   // ---------- Price comparison by shop ----------
   function openProductDetail(id) {
     const p = products.find(x => x.id === id);
@@ -544,14 +883,13 @@
       return;
     }
 
-    // Group purchases by shop
     const groups = {};
     rows.forEach(r => {
       const shop = r.supermarket || 'Not recorded';
       (groups[shop] = groups[shop] || []).push(r);
     });
 
-    const shops = Object.entries(groups).map(([name, list]) => {
+    const shopRows = Object.entries(groups).map(([name, list]) => {
       const byDate = list.slice().sort((a, b) => b.bought_on.localeCompare(a.bought_on));
       const prices = list.map(x => Number(x.price));
       return {
@@ -563,17 +901,23 @@
       };
     }).sort((a, b) => Number(a.latest.price) - Number(b.latest.price));
 
-    // Cheapest latest price among recorded shops, only when there's a real comparison
-    const recorded = shops.filter(s => s.name !== 'Not recorded');
+    const recorded = shopRows.filter(s => s.name !== 'Not recorded');
     const cheapest = recorded.length > 1 ? recorded[0].name : null;
 
-    const shopCards = shops.map(s => `
+    const shopCards = shopRows.map(s => {
+      const shopObj = shops.find(x => x.name === s.name);
+      const link = shopObj
+        ? `<div style="margin-top:8px"><a class="btnlink ghost small" href="${mapLink(shopObj)}" target="_blank" rel="noopener">Google Maps</a></div>`
+        : '';
+      return `
       <div class="store-card ${s.name === cheapest ? 'best' : ''}">
         <h3>${esc(s.name)}${s.name === cheapest ? '<span class="tag">Cheapest</span>' : ''}</h3>
         <div class="price-big">${money(s.latest.price)}</div>
         <div class="muted">Last bought ${formatDate(s.latest.bought_on)}</div>
         <div class="muted">Lowest ${money(s.low)} · Average ${money(s.avg)} · Bought ${s.count} time${s.count === 1 ? '' : 's'}</div>
-      </div>`).join('');
+        ${link}
+      </div>`;
+    }).join('');
 
     const history = rows
       .slice()
@@ -631,6 +975,7 @@
 
     try {
       const name = $('pItem').value.trim();
+      const shopName = $('pStore').value.trim() || null;
       let product = findProduct(name);
       if (!product) {
         const { data, error } = await sb.from('products').insert({ name }).select().single();
@@ -645,12 +990,17 @@
           product_id: product.id,
           quantity: Number($('pQty').value),
           price: Number($('pPrice').value),
-          supermarket: $('pStore').value.trim() || null,
+          supermarket: shopName,
           bought_on: $('pDate').value
         })
         .select('*, products(name, photo_url)')
         .single();
       if (error) throw error;
+
+      if (shopName && !shops.some(s => s.name === shopName)) {
+        const { data: shopRow } = await sb.from('shops').insert({ name: shopName }).select().single();
+        if (shopRow) shops.push(shopRow);
+      }
 
       purchases.unshift(row);
       $('purchaseForm').reset();
@@ -789,18 +1139,16 @@
       if (file) photo = await uploadPhoto(file);
       else if (url) photo = url;
 
-      const { data: row, error } = await sb.from('products').update({
+      const { error } = await sb.from('products').update({
         name: $('epName').value.trim(),
         photo_url: photo,
         start_used: start,
         end_used: end
-      }).eq('id', editingProductId).select().single();
+      }).eq('id', editingProductId);
       if (error) throw error;
 
-      products = products.map(p => p.id === row.id ? row : p);
-      products.sort((a, b) => a.name.localeCompare(b.name));
       $('productDialog').close();
-      await loadAll(); // refresh purchase names in case the product was renamed
+      await loadAll();
     } catch (err) {
       msg.textContent = err.message;
     } finally {
@@ -829,13 +1177,11 @@
     $('totalSpent').textContent = money(rows.reduce((s, r) => s + Number(r.price), 0));
     $('totalQty').textContent = rows.reduce((s, r) => s + Number(r.quantity), 0).toString();
 
-    // Days used: the product's own figure, or the average across products that have one
     const withDays = products.filter(p => p.days_used && (choice === 'all' || p.id === choice));
     $('avgDays').textContent = withDays.length
       ? (withDays.reduce((s, p) => s + p.days_used, 0) / withDays.length).toFixed(withDays.length > 1 ? 1 : 0)
       : '—';
 
-    // Price over time (single product)
     if (priceChart) { priceChart.destroy(); priceChart = null; }
     if (choice === 'all') {
       $('priceTitle').classList.add('hidden');
@@ -861,7 +1207,6 @@
       });
     }
 
-    // Quantity per month
     if (qtyChart) { qtyChart.destroy(); qtyChart = null; }
     const byMonth = {};
     rows.forEach(r => {
