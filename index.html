@@ -10,13 +10,13 @@
 <style>
   :root {
     --bg: #f6f4ef; --card: #ffffff; --ink: #1d1d1b; --muted: #6b6b66;
-    --accent: #2f6f5e; --line: #e2dfd6; --danger: #b3261e;
+    --accent: #2f6f5e; --line: #e2dfd6; --danger: #b3261e; --tag: #dcefe7;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #171815; --card: #23251f; --ink: #f2f1ec; --muted: #a3a39b;
-      --accent: #6fb59f; --line: #34362f; --danger: #f2b8b5;
+      --accent: #6fb59f; --line: #34362f; --danger: #f2b8b5; --tag: #2b4a40;
       color-scheme: dark;
     }
   }
@@ -34,6 +34,7 @@
   }
   h1 { font-size: 20px; margin: 0; }
   h2 { font-size: 17px; margin: 0 0 12px; }
+  h3 { font-size: 15px; margin: 0 0 4px; }
   main { padding: 0 16px 40px; max-width: 720px; margin: 0 auto; }
   .card {
     background: var(--card); border: 1px solid var(--line);
@@ -62,6 +63,7 @@
   }
   .item:last-child { border-bottom: 0; }
   .item .grow { flex: 1; min-width: 0; }
+  .clickable { cursor: pointer; }
   .item .actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
   .thumb {
     width: 52px; height: 52px; border-radius: 10px; object-fit: cover;
@@ -77,9 +79,18 @@
   .empty { color: var(--muted); font-size: 14px; }
   .error { color: var(--danger); font-size: 14px; }
   .ok { color: var(--accent); font-size: 14px; }
+  .store-card {
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px;
+  }
+  .store-card.best { border-color: var(--accent); background: var(--tag); }
+  .tag {
+    display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+    background: var(--accent); color: #fff; margin-left: 6px; vertical-align: middle;
+  }
+  .price-big { font-size: 20px; font-weight: 600; }
   dialog {
     background: var(--card); color: var(--ink); border: 1px solid var(--line);
-    border-radius: 14px; width: min(92vw, 460px); padding: 18px;
+    border-radius: 14px; width: min(92vw, 460px); padding: 18px; max-height: 88vh; overflow-y: auto;
   }
   dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
   .dialog-buttons { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; }
@@ -129,13 +140,13 @@
               <input id="pQty" type="number" step="any" min="0.01" value="1" required>
             </div>
             <div>
-              <label for="pPrice">Price (£)</label>
+              <label for="pPrice">Price (Rs)</label>
               <input id="pPrice" type="number" step="0.01" min="0" inputmode="decimal" required>
             </div>
           </div>
 
           <label for="pStore">Supermarket (optional)</label>
-          <input id="pStore" list="storeList" placeholder="e.g. Tesco">
+          <input id="pStore" list="storeList" placeholder="e.g. Intermart">
           <datalist id="storeList"></datalist>
 
           <label for="pDate">Date bought</label>
@@ -182,6 +193,7 @@
 
       <div class="card">
         <h2>Your products</h2>
+        <p class="muted" style="margin-top:-6px">Tap a product to compare prices across shops.</p>
         <div id="productList"></div>
       </div>
     </section>
@@ -195,7 +207,7 @@
         <div class="stats">
           <div>
             <div class="muted">Total spent</div>
-            <div class="stat" id="totalSpent">£0.00</div>
+            <div class="stat" id="totalSpent">Rs 0.00</div>
           </div>
           <div>
             <div class="muted">Total bought</div>
@@ -219,6 +231,15 @@
   </div>
 </main>
 
+<!-- Product price comparison dialog -->
+<dialog id="productDetailDialog">
+  <h2 id="pdTitle">Prices</h2>
+  <div id="pdBody"></div>
+  <div class="dialog-buttons" style="justify-content:flex-end">
+    <button type="button" class="ghost" id="pdClose">Close</button>
+  </div>
+</dialog>
+
 <!-- Edit purchase dialog -->
 <dialog id="purchaseDialog">
   <h2 id="epTitle">Edit purchase</h2>
@@ -229,7 +250,7 @@
         <input id="epQty" type="number" step="any" min="0.01" required>
       </div>
       <div>
-        <label for="epPrice">Price (£)</label>
+        <label for="epPrice">Price (Rs)</label>
         <input id="epPrice" type="number" step="0.01" min="0" inputmode="decimal" required>
       </div>
     </div>
@@ -299,7 +320,9 @@
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[c]));
   }
-  function money(n) { return '£' + Number(n || 0).toFixed(2); }
+  function money(n) {
+    return 'Rs ' + Number(n || 0).toLocaleString('en-MU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
   function todayLocal() {
     const d = new Date();
     d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
@@ -358,7 +381,7 @@
   }
 
   // ---------- Auth ----------
-  sb.auth.onAuthStateChange((_event, session) => setTimeout(() => render(session), 0));
+  sb.auth.onAuthStateChange((_event, session) => render(session));
 
   async function init() {
     $('signInBtn').addEventListener('click', signIn);
@@ -493,7 +516,7 @@
       return `
         <div class="item">
           ${photo}
-          <div class="grow">
+          <div class="grow clickable" data-view-product="${p.id}">
             <strong>${esc(p.name)}</strong>
             <div class="muted">${buys}</div>
             <div class="muted">${usageText(p)}</div>
@@ -502,9 +525,78 @@
         </div>`;
     }).join('');
 
+    list.querySelectorAll('[data-view-product]').forEach(el =>
+      el.addEventListener('click', () => openProductDetail(el.dataset.viewProduct)));
     list.querySelectorAll('[data-edit-product]').forEach(btn =>
       btn.addEventListener('click', () => openProductEdit(btn.dataset.editProduct)));
   }
+
+  // ---------- Price comparison by shop ----------
+  function openProductDetail(id) {
+    const p = products.find(x => x.id === id);
+    if (!p) return;
+    const rows = purchases.filter(x => x.product_id === id);
+    $('pdTitle').textContent = p.name;
+
+    if (!rows.length) {
+      $('pdBody').innerHTML = '<p class="empty">No purchases yet, so there are no prices to compare.</p>';
+      $('productDetailDialog').showModal();
+      return;
+    }
+
+    // Group purchases by shop
+    const groups = {};
+    rows.forEach(r => {
+      const shop = r.supermarket || 'Not recorded';
+      (groups[shop] = groups[shop] || []).push(r);
+    });
+
+    const shops = Object.entries(groups).map(([name, list]) => {
+      const byDate = list.slice().sort((a, b) => b.bought_on.localeCompare(a.bought_on));
+      const prices = list.map(x => Number(x.price));
+      return {
+        name,
+        latest: byDate[0],
+        low: Math.min(...prices),
+        avg: prices.reduce((s, v) => s + v, 0) / prices.length,
+        count: list.length
+      };
+    }).sort((a, b) => Number(a.latest.price) - Number(b.latest.price));
+
+    // Cheapest latest price among recorded shops, only when there's a real comparison
+    const recorded = shops.filter(s => s.name !== 'Not recorded');
+    const cheapest = recorded.length > 1 ? recorded[0].name : null;
+
+    const shopCards = shops.map(s => `
+      <div class="store-card ${s.name === cheapest ? 'best' : ''}">
+        <h3>${esc(s.name)}${s.name === cheapest ? '<span class="tag">Cheapest</span>' : ''}</h3>
+        <div class="price-big">${money(s.latest.price)}</div>
+        <div class="muted">Last bought ${formatDate(s.latest.bought_on)}</div>
+        <div class="muted">Lowest ${money(s.low)} · Average ${money(s.avg)} · Bought ${s.count} time${s.count === 1 ? '' : 's'}</div>
+      </div>`).join('');
+
+    const history = rows
+      .slice()
+      .sort((a, b) => b.bought_on.localeCompare(a.bought_on))
+      .map(r => `
+        <div class="item">
+          <div class="grow">
+            <div>${formatDate(r.bought_on)}${r.supermarket ? ' · ' + esc(r.supermarket) : ''}</div>
+            <div class="muted">qty ${Number(r.quantity)}</div>
+          </div>
+          <strong>${money(r.price)}</strong>
+        </div>`).join('');
+
+    $('pdBody').innerHTML = `
+      <p class="muted">${usageText(p)}</p>
+      <h2 style="margin-top:12px">By shop</h2>
+      ${shopCards}
+      <h2 style="margin-top:16px">All purchases</h2>
+      ${history}`;
+    $('productDetailDialog').showModal();
+  }
+
+  $('pdClose').addEventListener('click', () => $('productDetailDialog').close());
 
   // ---------- Add purchase ----------
   $('pItem').addEventListener('input', updateItemHint);
@@ -758,7 +850,7 @@
         data: {
           labels: rows.map(r => formatDate(r.bought_on)),
           datasets: [{
-            label: 'Price (£)',
+            label: 'Price (Rs)',
             data: rows.map(r => Number(r.price)),
             borderColor: '#2f6f5e',
             backgroundColor: '#2f6f5e',
