@@ -12,12 +12,14 @@
   :root {
     --bg: #f6f4ef; --card: #ffffff; --ink: #1d1d1b; --muted: #6b6b66;
     --accent: #2f6f5e; --line: #e2dfd6; --danger: #b3261e; --tag: #dcefe7;
+    --star: #c98a00;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #171815; --card: #23251f; --ink: #f2f1ec; --muted: #a3a39b;
       --accent: #6fb59f; --line: #34362f; --danger: #f2b8b5; --tag: #2b4a40;
+      --star: #f0b429;
       color-scheme: dark;
     }
   }
@@ -50,6 +52,9 @@
   button.ghost, .btnlink.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
   button.small, .btnlink.small { padding: 4px 10px; font-size: 13px; }
   button.danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+  button.star { background: transparent; border: 0; color: var(--muted); font-size: 20px; padding: 2px 6px; }
+  button.star.on { color: var(--star); }
+  button.chip { border-radius: 999px; padding: 6px 12px; margin: 0 6px 6px 0; font-size: 14px; }
   input, select {
     width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 10px;
     font-size: 16px; background: var(--bg); color: var(--ink); margin-bottom: 12px;
@@ -67,6 +72,7 @@
   .item .grow { flex: 1; min-width: 0; }
   .clickable { cursor: pointer; }
   .item .actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .item .actions.row-actions { flex-direction: row; align-items: center; }
   .thumb {
     width: 52px; height: 52px; border-radius: 10px; object-fit: cover;
     background: var(--line); flex: none;
@@ -91,6 +97,7 @@
   }
   .price-big { font-size: 20px; font-weight: 600; }
   .result { display: block; width: 100%; text-align: left; margin-bottom: 6px; font-size: 14px; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
   #map { height: 420px; border-radius: 12px; margin-bottom: 8px; }
   dialog {
     background: var(--card); color: var(--ink); border: 1px solid var(--line);
@@ -134,6 +141,12 @@
     <section id="tab-purchases">
       <div class="card">
         <h2>Add a purchase</h2>
+
+        <div id="favChipsWrap" class="hidden">
+          <label>Favorites</label>
+          <div id="favChips"></div>
+        </div>
+
         <form id="purchaseForm" autocomplete="off">
           <label for="pItem">Item</label>
           <input id="pItem" list="itemList" placeholder="Type any item, e.g. Oat milk" required>
@@ -152,7 +165,7 @@
           </div>
 
           <label for="pStore">Shop (optional)</label>
-          <input id="pStore" list="storeList" placeholder="Pick or type a shop">
+          <input id="pStore" list="storeList" placeholder="Pick a shop, or type a new one">
           <datalist id="storeList"></datalist>
 
           <label for="pDate">Date bought</label>
@@ -198,8 +211,11 @@
       </div>
 
       <div class="card">
-        <h2>Your products</h2>
-        <p class="muted" style="margin-top:-6px">Tap a product to compare prices across shops.</p>
+        <div class="toolbar">
+          <h2 style="margin:0">Your products</h2>
+          <button type="button" id="favFilter" class="ghost small">Show favorites only</button>
+        </div>
+        <p class="muted" style="margin-top:-6px">Tap ☆ to favorite a product. Tap a name to compare prices across shops.</p>
         <div id="productList"></div>
       </div>
     </section>
@@ -223,6 +239,7 @@
 
       <div class="card">
         <h2>Your shops</h2>
+        <p class="muted" style="margin-top:-6px">Branches with the same name are kept separate by area.</p>
         <div id="shopList"></div>
       </div>
     </section>
@@ -371,8 +388,8 @@
 
   const MAURITIUS_CENTRE = [-20.2, 57.55];
 
-  let products = [];   // [{id, name, photo_url, start_used, end_used, days_used}]
-  let purchases = [];  // [{id, product_id, quantity, price, supermarket, bought_on, products:{name, photo_url}}]
+  let products = [];   // [{id, name, photo_url, start_used, end_used, days_used, is_favorite}]
+  let purchases = [];  // [{id, product_id, shop_id, quantity, price, bought_on, products:{name, photo_url}}]
   let shops = [];      // [{id, name, area, lat, lng}]
   let priceChart = null;
   let qtyChart = null;
@@ -382,6 +399,7 @@
   let editingProductId = null;
   let editingShopId = null;
   let lastSearchAt = 0;
+  let favoritesOnly = false;
 
   const $ = (id) => document.getElementById(id);
 
@@ -433,8 +451,16 @@
     const days = p.days_used ? ` · ${p.days_used} day${p.days_used === 1 ? '' : 's'}` : '';
     return `Used ${range}${days}`;
   }
-  function shopStats(name) {
-    const rows = purchases.filter(p => p.supermarket === name);
+
+  // Shops: a branch is identified by name + area, so "Intermart · Bagatelle" and "Intermart · Trianon" are separate
+  function shopLabel(s) {
+    return s.area ? `${s.name} · ${s.area}` : s.name;
+  }
+  function shopById(id) {
+    return shops.find(s => s.id === id) || null;
+  }
+  function shopStats(shop) {
+    const rows = purchases.filter(p => p.shop_id === shop.id);
     return { count: rows.length, total: rows.reduce((s, r) => s + Number(r.price), 0) };
   }
   function mapLink(shop) {
@@ -443,6 +469,34 @@
     }
     const q = [shop.name, shop.area, 'Mauritius'].filter(Boolean).join(' ');
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+  }
+  function sameShop(a, b) {
+    return a.name.trim().toLowerCase() === b.name.trim().toLowerCase()
+      && (a.area || '').trim().toLowerCase() === (b.area || '').trim().toLowerCase();
+  }
+
+  // Works out which shop the typed text means
+  async function resolveShop(text) {
+    const t = text.trim();
+    if (!t) return null;
+
+    // Exact label, e.g. "Intermart · Bagatelle"
+    const byLabel = shops.find(s => shopLabel(s).toLowerCase() === t.toLowerCase());
+    if (byLabel) return byLabel;
+
+    // Plain name that matches only one shop
+    const byName = shops.filter(s => s.name.toLowerCase() === t.toLowerCase());
+    if (byName.length === 1) return byName[0];
+    if (byName.length > 1) {
+      throw new Error(`There are ${byName.length} shops called "${byName[0].name}". Pick the right one from the list, e.g. "${shopLabel(byName[0])}".`);
+    }
+
+    // New shop
+    const { data, error } = await sb.from('shops').insert({ name: t }).select().single();
+    if (error) throw error;
+    shops.push(data);
+    shops.sort((a, b) => a.name.localeCompare(b.name));
+    return data;
   }
 
   // Shrink phone photos before upload so they're quick to send
@@ -549,6 +603,10 @@
     $('signOutBtn').addEventListener('click', () => sb.auth.signOut());
     document.querySelectorAll('[data-tab]').forEach(btn =>
       btn.addEventListener('click', () => showTab(btn.dataset.tab)));
+    $('favFilter').addEventListener('click', () => {
+      favoritesOnly = !favoritesOnly;
+      renderProducts();
+    });
     $('pDate').value = todayLocal();
 
     const { data: { session } } = await sb.auth.getSession();
@@ -592,9 +650,10 @@
 
   // ---------- Data ----------
   async function loadAll() {
-    const [p, c] = await Promise.all([
+    const [p, c, s] = await Promise.all([
       sb.from('products').select('*').order('name'),
-      sb.from('purchases').select('*, products(name, photo_url)').order('bought_on', { ascending: false })
+      sb.from('purchases').select('*, products(name, photo_url)').order('bought_on', { ascending: false }),
+      sb.from('shops').select('*').order('name')
     ]);
     if (p.error || c.error) {
       alert('Could not load data: ' + (p.error || c.error).message);
@@ -602,32 +661,20 @@
     }
     products = p.data;
     purchases = c.data;
-
-    // Shops are loaded separately, so a problem here won't hide products and purchases
-    const s = await sb.from('shops').select('*').order('name');
     if (s.error) {
+      shops = [];
       renderAll();
       $('shopList').innerHTML = '<p class="error">Shops could not load. Run the Shops SQL in Supabase, then refresh.</p>';
       return;
     }
     shops = s.data;
-
-    // Any shop name already used in a purchase gets added to the Shops list
-    const missing = [...new Set(purchases.map(x => x.supermarket).filter(Boolean))]
-      .filter(n => !shops.some(sh => sh.name === n));
-    if (missing.length) {
-      const up = await sb.from('shops').upsert(missing.map(name => ({ name })), { onConflict: 'name', ignoreDuplicates: true });
-      if (!up.error) {
-        const again = await sb.from('shops').select('*').order('name');
-        if (!again.error) shops = again.data;
-      }
-    }
     renderAll();
   }
 
   function renderAll() {
     renderItemOptions();
     renderStores();
+    renderFavChips();
     renderPurchases();
     renderProducts();
     renderShops();
@@ -645,8 +692,25 @@
   }
 
   function renderStores() {
-    const names = [...new Set([...shops.map(s => s.name), ...purchases.map(p => p.supermarket).filter(Boolean)])].sort();
-    $('storeList').innerHTML = names.map(n => `<option value="${esc(n)}">`).join('');
+    const sorted = shops.slice().sort((a, b) => shopLabel(a).localeCompare(shopLabel(b)));
+    $('storeList').innerHTML = sorted.map(s => `<option value="${esc(shopLabel(s))}">`).join('');
+  }
+
+  // Quick-pick chips on the purchase form
+  function renderFavChips() {
+    const favs = products.filter(p => p.is_favorite).sort((a, b) => a.name.localeCompare(b.name));
+    $('favChipsWrap').classList.toggle('hidden', favs.length === 0);
+    $('favChips').innerHTML = favs.map(p =>
+      `<button type="button" class="ghost chip" data-fav-pick="${p.id}">${esc(p.name)}</button>`
+    ).join('');
+    $('favChips').querySelectorAll('[data-fav-pick]').forEach(btn =>
+      btn.addEventListener('click', () => {
+        const p = products.find(x => x.id === btn.dataset.favPick);
+        if (!p) return;
+        $('pItem').value = p.name;
+        $('pItem').dispatchEvent(new Event('change'));
+        $('pPrice').focus();
+      }));
   }
 
   function renderPurchases() {
@@ -660,7 +724,8 @@
       const photo = p.products && p.products.photo_url
         ? `<img class="thumb" src="${esc(p.products.photo_url)}" alt="">`
         : '<div class="thumb"></div>';
-      const store = p.supermarket ? ` · ${esc(p.supermarket)}` : '';
+      const shop = shopById(p.shop_id);
+      const store = shop ? ` · ${esc(shopLabel(shop))}` : '';
       return `
         <div class="item">
           ${photo}
@@ -684,11 +749,20 @@
 
   function renderProducts() {
     const list = $('productList');
-    if (!products.length) {
-      list.innerHTML = '<p class="empty">No products yet. Add one above, or type a new item when you add a purchase.</p>';
+    $('favFilter').textContent = favoritesOnly ? 'Show all products' : 'Show favorites only';
+
+    let items = products.slice();
+    if (favoritesOnly) items = items.filter(p => p.is_favorite);
+    items.sort((a, b) => (Number(!!b.is_favorite) - Number(!!a.is_favorite)) || a.name.localeCompare(b.name));
+
+    if (!items.length) {
+      list.innerHTML = favoritesOnly
+        ? '<p class="empty">No favorites yet. Tap ☆ next to a product to add one.</p>'
+        : '<p class="empty">No products yet. Add one above, or type a new item when you add a purchase.</p>';
       return;
     }
-    list.innerHTML = products.map(p => {
+
+    list.innerHTML = items.map(p => {
       const count = purchases.filter(x => x.product_id === p.id).length;
       const last = lastPurchaseOf(p.id);
       const buys = last
@@ -697,6 +771,7 @@
       const photo = p.photo_url
         ? `<img class="thumb" src="${esc(p.photo_url)}" alt="">`
         : '<div class="thumb"></div>';
+      const star = p.is_favorite ? '★' : '☆';
       return `
         <div class="item">
           ${photo}
@@ -705,7 +780,10 @@
             <div class="muted">${buys}</div>
             <div class="muted">${usageText(p)}</div>
           </div>
-          <button class="ghost small" data-edit-product="${p.id}">Edit</button>
+          <div class="actions row-actions">
+            <button class="star ${p.is_favorite ? 'on' : ''}" data-fav="${p.id}" aria-label="Favorite">${star}</button>
+            <button class="ghost small" data-edit-product="${p.id}">Edit</button>
+          </div>
         </div>`;
     }).join('');
 
@@ -713,17 +791,32 @@
       el.addEventListener('click', () => openProductDetail(el.dataset.viewProduct)));
     list.querySelectorAll('[data-edit-product]').forEach(btn =>
       btn.addEventListener('click', () => openProductEdit(btn.dataset.editProduct)));
+    list.querySelectorAll('[data-fav]').forEach(btn =>
+      btn.addEventListener('click', () => toggleFavorite(btn.dataset.fav)));
+  }
+
+  async function toggleFavorite(id) {
+    const p = products.find(x => x.id === id);
+    if (!p) return;
+    const { data: row, error } = await sb.from('products')
+      .update({ is_favorite: !p.is_favorite })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) { alert(error.message); return; }
+    products = products.map(x => x.id === id ? row : x);
+    renderAll();
   }
 
   // ---------- Shops ----------
   function renderShops() {
     const list = $('shopList');
     if (!shops.length) {
-      list.innerHTML = '<p class="empty">No shops yet. Add one above.</p>';
+      list.innerHTML = '<p class="empty">No shops yet. Add one above, or type a new shop when you add a purchase.</p>';
       return;
     }
     list.innerHTML = shops.map(s => {
-      const st = shopStats(s.name);
+      const st = shopStats(s);
       const where = s.lat != null ? 'On the map' : 'No location yet';
       return `
         <div class="item">
@@ -749,12 +842,11 @@
     const btn = $('shSave');
     msg.textContent = '';
     msg.className = 'muted';
-    const name = $('shName').value.trim();
-    const area = $('shArea').value.trim() || null;
+    const candidate = { name: $('shName').value.trim(), area: $('shArea').value.trim() || null };
     const loc = addPicker.get();
 
-    if (shops.some(s => s.name.toLowerCase() === name.toLowerCase())) {
-      msg.textContent = 'You already have a shop with that name.';
+    if (shops.some(s => sameShop(s, candidate))) {
+      msg.textContent = 'You already have this shop and area.';
       msg.className = 'error';
       return;
     }
@@ -762,7 +854,7 @@
     setBusy(btn, true);
     try {
       const { data: row, error } = await sb.from('shops')
-        .insert({ name, area, lat: loc ? loc.lat : null, lng: loc ? loc.lng : null })
+        .insert({ name: candidate.name, area: candidate.area, lat: loc ? loc.lat : null, lng: loc ? loc.lng : null })
         .select().single();
       if (error) throw error;
       shops.push(row);
@@ -781,7 +873,7 @@
   });
 
   function openShopEdit(id) {
-    const s = shops.find(x => x.id === id);
+    const s = shopById(id);
     if (!s) return;
     editingShopId = id;
     $('esName').value = s.name;
@@ -799,32 +891,26 @@
     e.preventDefault();
     const msg = $('esMsg');
     const btn = $('esSave');
-    const current = shops.find(x => x.id === editingShopId);
-    const newName = $('esName').value.trim();
+    const current = shopById(editingShopId);
+    const candidate = { name: $('esName').value.trim(), area: $('esArea').value.trim() || null };
     const loc = editPicker.get() || { lat: current.lat, lng: current.lng };
 
-    if (shops.some(s => s.id !== editingShopId && s.name.toLowerCase() === newName.toLowerCase())) {
-      msg.textContent = 'You already have a shop with that name.';
+    if (shops.some(s => s.id !== editingShopId && sameShop(s, candidate))) {
+      msg.textContent = 'You already have this shop and area.';
       return;
     }
 
     setBusy(btn, true);
     msg.textContent = '';
     try {
+      // Purchases link to the shop by id, so renaming needs no changes to purchases
       const { error } = await sb.from('shops').update({
-        name: newName,
-        area: $('esArea').value.trim() || null,
+        name: candidate.name,
+        area: candidate.area,
         lat: loc.lat ?? null,
         lng: loc.lng ?? null
       }).eq('id', editingShopId);
       if (error) throw error;
-
-      // Keep past purchases attached to the renamed shop
-      if (newName !== current.name) {
-        const { error: pErr } = await sb.from('purchases')
-          .update({ supermarket: newName }).eq('supermarket', current.name);
-        if (pErr) throw pErr;
-      }
       $('shopDialog').close();
       await loadAll();
     } catch (err) {
@@ -835,13 +921,13 @@
   });
 
   $('esDelete').addEventListener('click', async () => {
-    const s = shops.find(x => x.id === editingShopId);
-    const used = purchases.filter(p => p.supermarket === s.name).length;
+    const s = shopById(editingShopId);
+    const used = purchases.filter(p => p.shop_id === s.id).length;
     if (used) {
-      $('esMsg').textContent = `This shop has ${used} purchase${used === 1 ? '' : 's'}, so it can't be removed. You can rename it instead.`;
+      $('esMsg').textContent = `This shop has ${used} purchase${used === 1 ? '' : 's'}, so it can't be removed. You can edit its name or area instead.`;
       return;
     }
-    if (!confirm(`Remove "${s.name}" from your shops?`)) return;
+    if (!confirm(`Remove "${shopLabel(s)}" from your shops?`)) return;
     const { error } = await sb.from('shops').delete().eq('id', editingShopId);
     if (error) { $('esMsg').textContent = error.message; return; }
     $('shopDialog').close();
@@ -863,7 +949,7 @@
 
     const pinned = shops.filter(s => s.lat != null && s.lng != null);
     pinned.forEach(s => {
-      const st = shopStats(s.name);
+      const st = shopStats(s);
       const popup = `
         <strong>${esc(s.name)}</strong>${s.area ? '<br>' + esc(s.area) : ''}<br>
         ${st.count} purchase${st.count === 1 ? '' : 's'} · ${money(st.total)} spent<br>
@@ -898,17 +984,21 @@
       return;
     }
 
+    // Group by shop id, so branches with the same name stay separate
     const groups = {};
     rows.forEach(r => {
-      const shop = r.supermarket || 'Not recorded';
-      (groups[shop] = groups[shop] || []).push(r);
+      const key = r.shop_id || 'none';
+      (groups[key] = groups[key] || []).push(r);
     });
 
-    const shopRows = Object.entries(groups).map(([name, list]) => {
+    const shopRows = Object.entries(groups).map(([key, list]) => {
+      const shop = key === 'none' ? null : shopById(key);
       const byDate = list.slice().sort((a, b) => b.bought_on.localeCompare(a.bought_on));
       const prices = list.map(x => Number(x.price));
       return {
-        name,
+        key,
+        shop,
+        label: shop ? shopLabel(shop) : 'Not recorded',
         latest: byDate[0],
         low: Math.min(...prices),
         avg: prices.reduce((s, v) => s + v, 0) / prices.length,
@@ -916,17 +1006,16 @@
       };
     }).sort((a, b) => Number(a.latest.price) - Number(b.latest.price));
 
-    const recorded = shopRows.filter(s => s.name !== 'Not recorded');
-    const cheapest = recorded.length > 1 ? recorded[0].name : null;
+    const recorded = shopRows.filter(s => s.shop);
+    const cheapest = recorded.length > 1 ? recorded[0].key : null;
 
     const shopCards = shopRows.map(s => {
-      const shopObj = shops.find(x => x.name === s.name);
-      const link = shopObj
-        ? `<div style="margin-top:8px"><a class="btnlink ghost small" href="${mapLink(shopObj)}" target="_blank" rel="noopener">Google Maps</a></div>`
+      const link = s.shop
+        ? `<div style="margin-top:8px"><a class="btnlink ghost small" href="${mapLink(s.shop)}" target="_blank" rel="noopener">Google Maps</a></div>`
         : '';
       return `
-      <div class="store-card ${s.name === cheapest ? 'best' : ''}">
-        <h3>${esc(s.name)}${s.name === cheapest ? '<span class="tag">Cheapest</span>' : ''}</h3>
+      <div class="store-card ${s.key === cheapest ? 'best' : ''}">
+        <h3>${esc(s.label)}${s.key === cheapest ? '<span class="tag">Cheapest</span>' : ''}</h3>
         <div class="price-big">${money(s.latest.price)}</div>
         <div class="muted">Last bought ${formatDate(s.latest.bought_on)}</div>
         <div class="muted">Lowest ${money(s.low)} · Average ${money(s.avg)} · Bought ${s.count} time${s.count === 1 ? '' : 's'}</div>
@@ -937,14 +1026,17 @@
     const history = rows
       .slice()
       .sort((a, b) => b.bought_on.localeCompare(a.bought_on))
-      .map(r => `
+      .map(r => {
+        const shop = shopById(r.shop_id);
+        return `
         <div class="item">
           <div class="grow">
-            <div>${formatDate(r.bought_on)}${r.supermarket ? ' · ' + esc(r.supermarket) : ''}</div>
+            <div>${formatDate(r.bought_on)}${shop ? ' · ' + esc(shopLabel(shop)) : ''}</div>
             <div class="muted">qty ${Number(r.quantity)}</div>
           </div>
           <strong>${money(r.price)}</strong>
-        </div>`).join('');
+        </div>`;
+      }).join('');
 
     $('pdBody').innerHTML = `
       <p class="muted">${usageText(p)}</p>
@@ -963,8 +1055,9 @@
     const p = findProduct($('pItem').value);
     const last = p && lastPurchaseOf(p.id);
     if (last) {
+      const shop = shopById(last.shop_id);
       $('pPrice').value = last.price;
-      $('pStore').value = last.supermarket || '';
+      $('pStore').value = shop ? shopLabel(shop) : '';
     }
     updateItemHint();
   });
@@ -975,9 +1068,9 @@
     const p = findProduct(name);
     if (!p) { $('itemHint').textContent = 'New item. It will be added to your products.'; return; }
     const last = lastPurchaseOf(p.id);
-    $('itemHint').textContent = last
-      ? `Last paid ${money(last.price)}${last.supermarket ? ' at ' + last.supermarket : ''} on ${formatDate(last.bought_on)}.`
-      : 'Existing product. No previous purchases yet.';
+    if (!last) { $('itemHint').textContent = 'Existing product. No previous purchases yet.'; return; }
+    const shop = shopById(last.shop_id);
+    $('itemHint').textContent = `Last paid ${money(last.price)}${shop ? ' at ' + shopLabel(shop) : ''} on ${formatDate(last.bought_on)}.`;
   }
 
   $('purchaseForm').addEventListener('submit', async (e) => {
@@ -990,7 +1083,7 @@
 
     try {
       const name = $('pItem').value.trim();
-      const shopName = $('pStore').value.trim() || null;
+      const shop = await resolveShop($('pStore').value);
       let product = findProduct(name);
       if (!product) {
         const { data, error } = await sb.from('products').insert({ name }).select().single();
@@ -1005,7 +1098,7 @@
           product_id: product.id,
           quantity: Number($('pQty').value),
           price: Number($('pPrice').value),
-          supermarket: shopName,
+          shop_id: shop ? shop.id : null,
           bought_on: $('pDate').value
         })
         .select('*, products(name, photo_url)')
@@ -1020,12 +1113,6 @@
       msg.textContent = 'Saved.';
       msg.className = 'ok';
       renderAll();
-
-      // Add a new shop name to the Shops list in the background, without making the save wait
-      if (shopName && !shops.some(s => s.name === shopName)) {
-        sb.from('shops').insert({ name: shopName }).select().single()
-          .then(({ data: shopRow }) => { if (shopRow) { shops.push(shopRow); renderAll(); } });
-      }
     } catch (err) {
       msg.textContent = err.message;
       msg.className = 'error';
@@ -1039,10 +1126,11 @@
     const p = purchases.find(x => x.id === id);
     if (!p) return;
     editingPurchaseId = id;
+    const shop = shopById(p.shop_id);
     $('epTitle').textContent = p.products ? p.products.name : 'Edit purchase';
     $('epQty').value = p.quantity;
     $('epPrice').value = p.price;
-    $('epStore').value = p.supermarket || '';
+    $('epStore').value = shop ? shopLabel(shop) : '';
     $('epDate').value = p.bought_on;
     $('epMsg').textContent = '';
     $('purchaseDialog').showModal();
@@ -1053,19 +1141,26 @@
   $('purchaseEditForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = $('epSave');
+    const msg = $('epMsg');
     setBusy(btn, true);
-    const { data: row, error } = await sb.from('purchases').update({
-      quantity: Number($('epQty').value),
-      price: Number($('epPrice').value),
-      supermarket: $('epStore').value.trim() || null,
-      bought_on: $('epDate').value
-    }).eq('id', editingPurchaseId).select('*, products(name, photo_url)').single();
-    setBusy(btn, false);
+    try {
+      const shop = await resolveShop($('epStore').value);
+      const { data: row, error } = await sb.from('purchases').update({
+        quantity: Number($('epQty').value),
+        price: Number($('epPrice').value),
+        shop_id: shop ? shop.id : null,
+        bought_on: $('epDate').value
+      }).eq('id', editingPurchaseId).select('*, products(name, photo_url)').single();
+      if (error) throw error;
 
-    if (error) { $('epMsg').textContent = error.message; return; }
-    purchases = purchases.map(p => p.id === row.id ? row : p);
-    $('purchaseDialog').close();
-    renderAll();
+      purchases = purchases.map(p => p.id === row.id ? row : p);
+      $('purchaseDialog').close();
+      renderAll();
+    } catch (err) {
+      msg.textContent = err.message;
+    } finally {
+      setBusy(btn, false);
+    }
   });
 
   async function deletePurchase(id) {
