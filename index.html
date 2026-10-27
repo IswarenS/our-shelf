@@ -12,14 +12,14 @@
   :root {
     --bg: #f6f4ef; --card: #ffffff; --ink: #1d1d1b; --muted: #6b6b66;
     --accent: #2f6f5e; --line: #e2dfd6; --danger: #b3261e; --tag: #dcefe7;
-    --star: #c98a00;
+    --star: #c98a00; --warn-bg: #fdecea;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #171815; --card: #23251f; --ink: #f2f1ec; --muted: #a3a39b;
       --accent: #6fb59f; --line: #34362f; --danger: #f2b8b5; --tag: #2b4a40;
-      --star: #f0b429;
+      --star: #f0b429; --warn-bg: #4a2320;
       color-scheme: dark;
     }
   }
@@ -43,6 +43,7 @@
     background: var(--card); border: 1px solid var(--line);
     border-radius: 14px; padding: 16px; margin-bottom: 14px;
   }
+  .warn { background: var(--warn-bg); border-color: var(--danger); }
   button, .btnlink {
     background: var(--accent); color: #fff; border: 0; border-radius: 10px;
     padding: 10px 14px; font-size: 15px; cursor: pointer; text-decoration: none;
@@ -129,6 +130,11 @@
 
   <!-- App -->
   <div id="appView" class="hidden">
+    <section id="accessWarn" class="card warn hidden">
+      <strong>This Google account can't use Our Shelf.</strong>
+      <p class="muted" style="margin:6px 0 0">You won't see or save anything while signed in with it. Tap Sign out, then sign in with iswaren.siman@gmail.com or jenniswaren@gmail.com.</p>
+    </section>
+
     <nav class="tabs">
       <button data-tab="purchases">Purchases</button>
       <button data-tab="products" class="off">Products</button>
@@ -189,6 +195,9 @@
         <form id="productForm" autocomplete="off">
           <label for="prName">Name</label>
           <input id="prName" required placeholder="e.g. Oat milk">
+
+          <label for="prBrand">Brand (optional)</label>
+          <input id="prBrand" placeholder="e.g. Alpro">
 
           <label for="prPhotoFile">Photo (optional)</label>
           <input id="prPhotoFile" type="file" accept="image/*">
@@ -353,6 +362,8 @@
     <img id="epPhotoPreview" class="preview hidden" alt="">
     <label for="epName">Name</label>
     <input id="epName" required>
+    <label for="epBrand">Brand (optional)</label>
+    <input id="epBrand" placeholder="e.g. Alpro">
     <label for="epPhotoFile">Change photo (optional)</label>
     <input id="epPhotoFile" type="file" accept="image/*">
     <input id="epPhotoUrl" type="url" placeholder="or paste a picture link">
@@ -384,12 +395,14 @@
   const SUPABASE_URL = 'https://djttpfolfccrwdmadarp.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_8zOtpJm8Lv55p_YVRiDXhA_zbXoCULP';
   const BUCKET = 'product-photos';
+  // Must match the emails in the database policies exactly (lowercase)
+  const ALLOWED_EMAILS = ['iswaren.siman@gmail.com', 'iswarensiman@gmail.com', 'jenniswaren@gmail.com'];
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   const MAURITIUS_CENTRE = [-20.2, 57.55];
 
-  let products = [];   // [{id, name, photo_url, start_used, end_used, days_used, is_favorite}]
-  let purchases = [];  // [{id, product_id, shop_id, quantity, price, bought_on, products:{name, photo_url}}]
+  let products = [];   // [{id, name, brand, photo_url, start_used, end_used, days_used, is_favorite}]
+  let purchases = [];  // [{id, product_id, shop_id, quantity, price, bought_on, products:{name, brand, photo_url}}]
   let shops = [];      // [{id, name, area, lat, lng}]
   let priceChart = null;
   let qtyChart = null;
@@ -451,6 +464,10 @@
     const days = p.days_used ? ` · ${p.days_used} day${p.days_used === 1 ? '' : 's'}` : '';
     return `Used ${range}${days}`;
   }
+  // Product name with optional brand, e.g. "Alpro · Oat milk"
+  function productTitle(p) {
+    return p && p.brand ? `${p.brand} · ${p.name}` : (p ? p.name : 'Unknown item');
+  }
 
   // Shops: a branch is identified by name + area, so "Intermart · Bagatelle" and "Intermart · Trianon" are separate
   function shopLabel(s) {
@@ -480,18 +497,15 @@
     const t = text.trim();
     if (!t) return null;
 
-    // Exact label, e.g. "Intermart · Bagatelle"
     const byLabel = shops.find(s => shopLabel(s).toLowerCase() === t.toLowerCase());
     if (byLabel) return byLabel;
 
-    // Plain name that matches only one shop
     const byName = shops.filter(s => s.name.toLowerCase() === t.toLowerCase());
     if (byName.length === 1) return byName[0];
     if (byName.length > 1) {
       throw new Error(`There are ${byName.length} shops called "${byName[0].name}". Pick the right one from the list, e.g. "${shopLabel(byName[0])}".`);
     }
 
-    // New shop
     const { data, error } = await sb.from('shops').insert({ name: t }).select().single();
     if (error) throw error;
     shops.push(data);
@@ -634,7 +648,13 @@
     $('signInView').classList.add('hidden');
     $('appView').classList.remove('hidden');
     $('signOutBtn').classList.remove('hidden');
-    $('signOutBtn').textContent = 'Sign out (' + session.user.email + ')';
+    const email = (session.user.email || '').trim();
+    $('signOutBtn').textContent = 'Sign out (' + email + ')';
+
+    // The database only lets listed accounts see data. Warn early instead of showing empty lists.
+    const allowed = ALLOWED_EMAILS.includes(email.toLowerCase());
+    $('accessWarn').classList.toggle('hidden', allowed);
+
     if (!loadedOnce) { loadedOnce = true; await loadAll(); }
   }
 
@@ -652,7 +672,7 @@
   async function loadAll() {
     const [p, c, s] = await Promise.all([
       sb.from('products').select('*').order('name'),
-      sb.from('purchases').select('*, products(name, photo_url)').order('bought_on', { ascending: false }),
+      sb.from('purchases').select('*, products(name, brand, photo_url)').order('bought_on', { ascending: false }),
       sb.from('shops').select('*').order('name')
     ]);
     if (p.error || c.error) {
@@ -664,7 +684,7 @@
     if (s.error) {
       shops = [];
       renderAll();
-      $('shopList').innerHTML = '<p class="error">Shops could not load. Run the Shops SQL in Supabase, then refresh.</p>';
+      $('shopList').innerHTML = `<p class="error">Shops could not load: ${esc(s.error.message)}</p>`;
       return;
     }
     shops = s.data;
@@ -687,7 +707,7 @@
     const current = $('chartProduct').value;
     $('chartProduct').innerHTML =
       '<option value="all">All products</option>' +
-      products.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+      products.map(p => `<option value="${p.id}">${esc(productTitle(p))}</option>`).join('');
     if (current && (current === 'all' || products.some(p => p.id === current))) $('chartProduct').value = current;
   }
 
@@ -701,7 +721,7 @@
     const favs = products.filter(p => p.is_favorite).sort((a, b) => a.name.localeCompare(b.name));
     $('favChipsWrap').classList.toggle('hidden', favs.length === 0);
     $('favChips').innerHTML = favs.map(p =>
-      `<button type="button" class="ghost chip" data-fav-pick="${p.id}">${esc(p.name)}</button>`
+      `<button type="button" class="ghost chip" data-fav-pick="${p.id}">${esc(productTitle(p))}</button>`
     ).join('');
     $('favChips').querySelectorAll('[data-fav-pick]').forEach(btn =>
       btn.addEventListener('click', () => {
@@ -720,7 +740,6 @@
       return;
     }
     list.innerHTML = purchases.slice(0, 100).map(p => {
-      const name = p.products ? p.products.name : 'Unknown item';
       const photo = p.products && p.products.photo_url
         ? `<img class="thumb" src="${esc(p.products.photo_url)}" alt="">`
         : '<div class="thumb"></div>';
@@ -730,7 +749,7 @@
         <div class="item">
           ${photo}
           <div class="grow">
-            <strong>${esc(name)}</strong>
+            <strong>${esc(productTitle(p.products))}</strong>
             <div class="muted">${formatDate(p.bought_on)}${store} · qty ${Number(p.quantity)}</div>
           </div>
           <div class="actions">
@@ -776,7 +795,7 @@
         <div class="item">
           ${photo}
           <div class="grow clickable" data-view-product="${p.id}">
-            <strong>${esc(p.name)}</strong>
+            <strong>${esc(productTitle(p))}</strong>
             <div class="muted">${buys}</div>
             <div class="muted">${usageText(p)}</div>
           </div>
@@ -976,7 +995,7 @@
     const p = products.find(x => x.id === id);
     if (!p) return;
     const rows = purchases.filter(x => x.product_id === id);
-    $('pdTitle').textContent = p.name;
+    $('pdTitle').textContent = productTitle(p);
 
     if (!rows.length) {
       $('pdBody').innerHTML = '<p class="empty">No purchases yet, so there are no prices to compare.</p>';
@@ -984,7 +1003,6 @@
       return;
     }
 
-    // Group by shop id, so branches with the same name stay separate
     const groups = {};
     rows.forEach(r => {
       const key = r.shop_id || 'none';
@@ -1101,7 +1119,7 @@
           shop_id: shop ? shop.id : null,
           bought_on: $('pDate').value
         })
-        .select('*, products(name, photo_url)')
+        .select('*, products(name, brand, photo_url)')
         .single();
       if (error) throw error;
 
@@ -1127,7 +1145,7 @@
     if (!p) return;
     editingPurchaseId = id;
     const shop = shopById(p.shop_id);
-    $('epTitle').textContent = p.products ? p.products.name : 'Edit purchase';
+    $('epTitle').textContent = productTitle(p.products);
     $('epQty').value = p.quantity;
     $('epPrice').value = p.price;
     $('epStore').value = shop ? shopLabel(shop) : '';
@@ -1150,7 +1168,7 @@
         price: Number($('epPrice').value),
         shop_id: shop ? shop.id : null,
         bought_on: $('epDate').value
-      }).eq('id', editingPurchaseId).select('*, products(name, photo_url)').single();
+      }).eq('id', editingPurchaseId).select('*, products(name, brand, photo_url)').single();
       if (error) throw error;
 
       purchases = purchases.map(p => p.id === row.id ? row : p);
@@ -1190,7 +1208,13 @@
       if (file) photo = await uploadPhoto(file);
 
       const { data: row, error } = await sb.from('products')
-        .insert({ name: $('prName').value.trim(), photo_url: photo, start_used: start, end_used: end })
+        .insert({
+          name: $('prName').value.trim(),
+          brand: $('prBrand').value.trim() || null,
+          photo_url: photo,
+          start_used: start,
+          end_used: end
+        })
         .select().single();
       if (error) throw error;
 
@@ -1214,6 +1238,7 @@
     if (!p) return;
     editingProductId = id;
     $('epName').value = p.name;
+    $('epBrand').value = p.brand || '';
     $('epPhotoUrl').value = '';
     $('epPhotoFile').value = '';
     $('epStart').value = p.start_used || '';
@@ -1252,6 +1277,7 @@
 
       const { error } = await sb.from('products').update({
         name: $('epName').value.trim(),
+        brand: $('epBrand').value.trim() || null,
         photo_url: photo,
         start_used: start,
         end_used: end
@@ -1270,7 +1296,7 @@
   $('deleteProductBtn').addEventListener('click', async () => {
     const p = products.find(x => x.id === editingProductId);
     const count = purchases.filter(x => x.product_id === editingProductId).length;
-    if (!confirm(`Delete "${p.name}"${count ? ` and its ${count} purchase${count === 1 ? '' : 's'}` : ''}?`)) return;
+    if (!confirm(`Delete "${productTitle(p)}"${count ? ` and its ${count} purchase${count === 1 ? '' : 's'}` : ''}?`)) return;
     const { error } = await sb.from('products').delete().eq('id', editingProductId);
     if (error) { $('epProductMsg').textContent = error.message; return; }
     $('productDialog').close();
