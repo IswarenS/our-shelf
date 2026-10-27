@@ -100,6 +100,22 @@
   .result { display: block; width: 100%; text-align: left; margin-bottom: 6px; font-size: 14px; }
   .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
   #map { height: 420px; border-radius: 12px; margin-bottom: 8px; }
+
+  /* Searchable dropdowns */
+  .combo { position: relative; }
+  .combo-list {
+    position: absolute; left: 0; right: 0; top: 100%; z-index: 30;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    max-height: 240px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    margin-top: -8px;
+  }
+  .combo-item {
+    display: block; width: 100%; text-align: left; background: transparent; color: var(--ink);
+    border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 12px; font-size: 15px;
+  }
+  .combo-item:last-child { border-bottom: 0; }
+  .combo-item:active, .combo-item:hover { background: var(--tag); }
+
   dialog {
     background: var(--card); color: var(--ink); border: 1px solid var(--line);
     border-radius: 14px; width: min(92vw, 460px); padding: 18px; max-height: 88vh; overflow-y: auto;
@@ -154,9 +170,17 @@
         </div>
 
         <form id="purchaseForm" autocomplete="off">
-          <label for="pItem">Item</label>
-          <input id="pItem" list="itemList" placeholder="Type any item, e.g. Oat milk" required>
-          <datalist id="itemList"></datalist>
+          <div class="combo">
+            <label for="pItem">Item</label>
+            <input id="pItem" placeholder="Type or pick an item, e.g. Oat milk" required>
+            <div id="pItemList" class="combo-list hidden"></div>
+          </div>
+
+          <div class="combo">
+            <label for="pBrand">Brand (optional)</label>
+            <input id="pBrand" placeholder="e.g. Alpro">
+            <div id="pBrandList" class="combo-list hidden"></div>
+          </div>
           <p id="itemHint" class="hint"></p>
 
           <div class="row">
@@ -170,9 +194,11 @@
             </div>
           </div>
 
-          <label for="pStore">Shop (optional)</label>
-          <input id="pStore" list="storeList" placeholder="Pick a shop, or type a new one">
-          <datalist id="storeList"></datalist>
+          <div class="combo">
+            <label for="pStore">Shop (optional)</label>
+            <input id="pStore" placeholder="Pick a shop, or type a new one">
+            <div id="pStoreList" class="combo-list hidden"></div>
+          </div>
 
           <label for="pDate">Date bought</label>
           <input id="pDate" type="date" required>
@@ -224,7 +250,8 @@
           <h2 style="margin:0">Your products</h2>
           <button type="button" id="favFilter" class="ghost small">Show favorites only</button>
         </div>
-        <p class="muted" style="margin-top:-6px">Tap ☆ to favorite a product. Tap a name to compare prices across shops.</p>
+        <input id="prodSearch" type="search" placeholder="Search by name or brand" autocomplete="off">
+        <p class="muted" style="margin-top:-6px">Tap ☆ to favorite a product. Tap a product to compare prices across shops.</p>
         <div id="productList"></div>
       </div>
     </section>
@@ -333,6 +360,11 @@
 <dialog id="purchaseDialog">
   <h2 id="epTitle">Edit purchase</h2>
   <form id="purchaseEditForm" method="dialog">
+    <div class="combo">
+      <label for="epPBrand">Brand (optional)</label>
+      <input id="epPBrand" placeholder="e.g. Alpro">
+      <div id="epPBrandList" class="combo-list hidden"></div>
+    </div>
     <div class="row">
       <div>
         <label for="epQty">Quantity</label>
@@ -343,8 +375,11 @@
         <input id="epPrice" type="number" step="0.01" min="0" inputmode="decimal" required>
       </div>
     </div>
-    <label for="epStore">Shop (optional)</label>
-    <input id="epStore" list="storeList">
+    <div class="combo">
+      <label for="epStore">Shop (optional)</label>
+      <input id="epStore" placeholder="Pick a shop, or type a new one">
+      <div id="epStoreList" class="combo-list hidden"></div>
+    </div>
     <label for="epDate">Date bought</label>
     <input id="epDate" type="date" required>
     <p id="epMsg" class="error"></p>
@@ -402,7 +437,7 @@
   const MAURITIUS_CENTRE = [-20.2, 57.55];
 
   let products = [];   // [{id, name, brand, photo_url, start_used, end_used, days_used, is_favorite}]
-  let purchases = [];  // [{id, product_id, shop_id, quantity, price, bought_on, products:{name, brand, photo_url}}]
+  let purchases = [];  // [{id, product_id, shop_id, brand, quantity, price, bought_on, products:{name, brand, photo_url}}]
   let shops = [];      // [{id, name, area, lat, lng}]
   let priceChart = null;
   let qtyChart = null;
@@ -468,6 +503,15 @@
   function productTitle(p) {
     return p && p.brand ? `${p.brand} · ${p.name}` : (p ? p.name : 'Unknown item');
   }
+  // A purchase's brand overrides the product's brand when set
+  function purchaseTitle(row) {
+    const pr = row.products;
+    if (row.brand && pr) return `${row.brand} · ${pr.name}`;
+    return productTitle(pr);
+  }
+  function uniqueSorted(list) {
+    return [...new Set(list.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  }
 
   // Shops: a branch is identified by name + area, so "Intermart · Bagatelle" and "Intermart · Trianon" are separate
   function shopLabel(s) {
@@ -512,6 +556,46 @@
     shops.sort((a, b) => a.name.localeCompare(b.name));
     return data;
   }
+
+  // ---------- Searchable dropdowns ----------
+  // Replaces the browser's built-in suggestions, which behave differently on each phone.
+  // source() returns the list of options; onPick(value) runs when one is chosen.
+  function makeCombo(inputId, listId, source, onPick) {
+    const input = $(inputId);
+    const list = $(listId);
+
+    function show() {
+      const q = input.value.trim().toLowerCase();
+      const items = source().filter(v => !q || v.toLowerCase().includes(q)).slice(0, 10);
+      if (!items.length) { list.classList.add('hidden'); return; }
+      list.innerHTML = items.map(v => `<button type="button" class="combo-item">${esc(v)}</button>`).join('');
+      list.classList.remove('hidden');
+      list.querySelectorAll('.combo-item').forEach(btn =>
+        // mousedown keeps the input focused and runs before the input loses focus
+        btn.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          input.value = btn.textContent;
+          list.classList.add('hidden');
+          if (onPick) onPick(btn.textContent);
+        }));
+    }
+
+    input.addEventListener('focus', show);
+    input.addEventListener('input', show);
+    input.addEventListener('blur', () => setTimeout(() => list.classList.add('hidden'), 150));
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') list.classList.add('hidden'); });
+    return { show };
+  }
+
+  // Close any dialog when tapping or clicking outside its box
+  function closeOnOutsideClick(dlg) {
+    dlg.addEventListener('click', (e) => {
+      const r = dlg.getBoundingClientRect();
+      const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      if (!inside) dlg.close();
+    });
+  }
+  document.querySelectorAll('dialog').forEach(closeOnOutsideClick);
 
   // Shrink phone photos before upload so they're quick to send
   async function shrinkImage(file) {
@@ -609,6 +693,22 @@
     resultsId: 'esResults', pickedId: 'esPicked', msgId: 'esMsg'
   });
 
+  // Dropdowns
+  const itemCombo = makeCombo('pItem', 'pItemList',
+    () => products.map(p => p.name),
+    () => applyProductDefaults());
+  makeCombo('pBrand', 'pBrandList', () => brandNames());
+  makeCombo('pStore', 'pStoreList', () => shopLabels());
+  makeCombo('epPBrand', 'epPBrandList', () => brandNames());
+  makeCombo('epStore', 'epStoreList', () => shopLabels());
+
+  function brandNames() {
+    return uniqueSorted([...products.map(p => p.brand), ...purchases.map(p => p.brand)]);
+  }
+  function shopLabels() {
+    return shops.slice().sort((a, b) => shopLabel(a).localeCompare(shopLabel(b))).map(shopLabel);
+  }
+
   // ---------- Auth ----------
   sb.auth.onAuthStateChange((_event, session) => render(session));
 
@@ -621,6 +721,7 @@
       favoritesOnly = !favoritesOnly;
       renderProducts();
     });
+    $('prodSearch').addEventListener('input', renderProducts);
     $('pDate').value = todayLocal();
 
     const { data: { session } } = await sb.auth.getSession();
@@ -693,7 +794,6 @@
 
   function renderAll() {
     renderItemOptions();
-    renderStores();
     renderFavChips();
     renderPurchases();
     renderProducts();
@@ -703,17 +803,11 @@
   }
 
   function renderItemOptions() {
-    $('itemList').innerHTML = products.map(p => `<option value="${esc(p.name)}">`).join('');
     const current = $('chartProduct').value;
     $('chartProduct').innerHTML =
       '<option value="all">All products</option>' +
       products.map(p => `<option value="${p.id}">${esc(productTitle(p))}</option>`).join('');
     if (current && (current === 'all' || products.some(p => p.id === current))) $('chartProduct').value = current;
-  }
-
-  function renderStores() {
-    const sorted = shops.slice().sort((a, b) => shopLabel(a).localeCompare(shopLabel(b)));
-    $('storeList').innerHTML = sorted.map(s => `<option value="${esc(shopLabel(s))}">`).join('');
   }
 
   // Quick-pick chips on the purchase form
@@ -728,7 +822,7 @@
         const p = products.find(x => x.id === btn.dataset.favPick);
         if (!p) return;
         $('pItem').value = p.name;
-        $('pItem').dispatchEvent(new Event('change'));
+        applyProductDefaults();
         $('pPrice').focus();
       }));
   }
@@ -749,7 +843,7 @@
         <div class="item">
           ${photo}
           <div class="grow">
-            <strong>${esc(productTitle(p.products))}</strong>
+            <strong>${esc(purchaseTitle(p))}</strong>
             <div class="muted">${formatDate(p.bought_on)}${store} · qty ${Number(p.quantity)}</div>
           </div>
           <div class="actions">
@@ -766,18 +860,29 @@
       btn.addEventListener('click', () => deletePurchase(btn.dataset.deletePurchase)));
   }
 
+  function matchesSearch(p, q) {
+    if (!q) return true;
+    return p.name.toLowerCase().includes(q) || (p.brand || '').toLowerCase().includes(q);
+  }
+
   function renderProducts() {
     const list = $('productList');
+    const q = $('prodSearch').value.trim().toLowerCase();
     $('favFilter').textContent = favoritesOnly ? 'Show all products' : 'Show favorites only';
 
     let items = products.slice();
     if (favoritesOnly) items = items.filter(p => p.is_favorite);
+    items = items.filter(p => matchesSearch(p, q));
     items.sort((a, b) => (Number(!!b.is_favorite) - Number(!!a.is_favorite)) || a.name.localeCompare(b.name));
 
     if (!items.length) {
-      list.innerHTML = favoritesOnly
-        ? '<p class="empty">No favorites yet. Tap ☆ next to a product to add one.</p>'
-        : '<p class="empty">No products yet. Add one above, or type a new item when you add a purchase.</p>';
+      if (q) {
+        list.innerHTML = `<p class="empty">No products match "${esc(q)}".</p>`;
+      } else {
+        list.innerHTML = favoritesOnly
+          ? '<p class="empty">No favorites yet. Tap ☆ next to a product to add one.</p>'
+          : '<p class="empty">No products yet. Add one above, or type a new item when you add a purchase.</p>';
+      }
       return;
     }
 
@@ -1046,10 +1151,11 @@
       .sort((a, b) => b.bought_on.localeCompare(a.bought_on))
       .map(r => {
         const shop = shopById(r.shop_id);
+        const brand = r.brand ? ` · ${esc(r.brand)}` : '';
         return `
         <div class="item">
           <div class="grow">
-            <div>${formatDate(r.bought_on)}${shop ? ' · ' + esc(shopLabel(shop)) : ''}</div>
+            <div>${formatDate(r.bought_on)}${shop ? ' · ' + esc(shopLabel(shop)) : ''}${brand}</div>
             <div class="muted">qty ${Number(r.quantity)}</div>
           </div>
           <strong>${money(r.price)}</strong>
@@ -1068,17 +1174,23 @@
   $('pdClose').addEventListener('click', () => $('productDetailDialog').close());
 
   // ---------- Add purchase ----------
-  $('pItem').addEventListener('input', updateItemHint);
-  $('pItem').addEventListener('change', () => {
+  // Fills price, shop and brand from the last purchase of the chosen item
+  function applyProductDefaults() {
     const p = findProduct($('pItem').value);
     const last = p && lastPurchaseOf(p.id);
     if (last) {
       const shop = shopById(last.shop_id);
       $('pPrice').value = last.price;
       $('pStore').value = shop ? shopLabel(shop) : '';
+      $('pBrand').value = last.brand || (p.brand || '');
+    } else if (p) {
+      $('pBrand').value = p.brand || '';
     }
     updateItemHint();
-  });
+  }
+
+  $('pItem').addEventListener('input', updateItemHint);
+  $('pItem').addEventListener('change', applyProductDefaults);
 
   function updateItemHint() {
     const name = $('pItem').value.trim();
@@ -1114,6 +1226,7 @@
       const { data: row, error } = await sb.from('purchases')
         .insert({
           product_id: product.id,
+          brand: $('pBrand').value.trim() || null,
           quantity: Number($('pQty').value),
           price: Number($('pPrice').value),
           shop_id: shop ? shop.id : null,
@@ -1145,7 +1258,8 @@
     if (!p) return;
     editingPurchaseId = id;
     const shop = shopById(p.shop_id);
-    $('epTitle').textContent = productTitle(p.products);
+    $('epTitle').textContent = purchaseTitle(p);
+    $('epPBrand').value = p.brand || '';
     $('epQty').value = p.quantity;
     $('epPrice').value = p.price;
     $('epStore').value = shop ? shopLabel(shop) : '';
@@ -1164,6 +1278,7 @@
     try {
       const shop = await resolveShop($('epStore').value);
       const { data: row, error } = await sb.from('purchases').update({
+        brand: $('epPBrand').value.trim() || null,
         quantity: Number($('epQty').value),
         price: Number($('epPrice').value),
         shop_id: shop ? shop.id : null,
