@@ -32,9 +32,10 @@
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   header {
-    display: flex; justify-content: space-between; align-items: center;
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
     padding: 16px; max-width: 720px; margin: 0 auto;
   }
+  header .right { display: flex; gap: 8px; }
   h1 { font-size: 20px; margin: 0; }
   h2 { font-size: 17px; margin: 0 0 12px; }
   h3 { font-size: 15px; margin: 0 0 4px; }
@@ -132,7 +133,10 @@
 
 <header>
   <h1>Our Shelf</h1>
-  <button id="signOutBtn" class="ghost small hidden">Sign out</button>
+  <div class="right">
+    <button id="reloadBtn" class="ghost small hidden">Reload</button>
+    <button id="signOutBtn" class="ghost small hidden">Sign out</button>
+  </div>
 </header>
 
 <main>
@@ -149,6 +153,13 @@
     <section id="accessWarn" class="card warn hidden">
       <strong>This Google account can't use Our Shelf.</strong>
       <p class="muted" style="margin:6px 0 0">You won't see or save anything while signed in with it. Tap Sign out, then sign in with iswaren.siman@gmail.com or jenniswaren@gmail.com.</p>
+    </section>
+
+    <section id="syncWarn" class="card warn hidden">
+      <strong id="syncText"></strong>
+      <div style="margin-top:8px">
+        <button type="button" id="reauthBtn" class="small">Sign in again</button>
+      </div>
     </section>
 
     <nav class="tabs">
@@ -448,6 +459,8 @@
   let editingShopId = null;
   let lastSearchAt = 0;
   let favoritesOnly = false;
+  let loadedOnce = false;
+  let everLoaded = false;   // true once we've seen data, so an empty reload can be flagged
 
   const $ = (id) => document.getElementById(id);
 
@@ -694,9 +707,7 @@
   });
 
   // Dropdowns
-  const itemCombo = makeCombo('pItem', 'pItemList',
-    () => products.map(p => p.name),
-    () => applyProductDefaults());
+  makeCombo('pItem', 'pItemList', () => products.map(p => p.name), () => applyProductDefaults());
   makeCombo('pBrand', 'pBrandList', () => brandNames());
   makeCombo('pStore', 'pStoreList', () => shopLabels());
   makeCombo('epPBrand', 'epPBrandList', () => brandNames());
@@ -715,6 +726,11 @@
   async function init() {
     $('signInBtn').addEventListener('click', signIn);
     $('signOutBtn').addEventListener('click', () => sb.auth.signOut());
+    $('reloadBtn').addEventListener('click', () => loadAll());
+    $('reauthBtn').addEventListener('click', async () => {
+      await sb.auth.signOut();
+      await signIn();
+    });
     document.querySelectorAll('[data-tab]').forEach(btn =>
       btn.addEventListener('click', () => showTab(btn.dataset.tab)));
     $('favFilter').addEventListener('click', () => {
@@ -723,6 +739,11 @@
     });
     $('prodSearch').addEventListener('input', renderProducts);
     $('pDate').value = todayLocal();
+
+    // Phones often pause the app in the background. Refresh the data when it comes back.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && loadedOnce) loadAll();
+    });
 
     const { data: { session } } = await sb.auth.getSession();
     render(session);
@@ -737,18 +758,20 @@
     if (error) $('authError').textContent = error.message;
   }
 
-  let loadedOnce = false;
   async function render(session) {
     if (!session) {
       $('signInView').classList.remove('hidden');
       $('appView').classList.add('hidden');
       $('signOutBtn').classList.add('hidden');
+      $('reloadBtn').classList.add('hidden');
       loadedOnce = false;
+      everLoaded = false;
       return;
     }
     $('signInView').classList.add('hidden');
     $('appView').classList.remove('hidden');
     $('signOutBtn').classList.remove('hidden');
+    $('reloadBtn').classList.remove('hidden');
     const email = (session.user.email || '').trim();
     $('signOutBtn').textContent = 'Sign out (' + email + ')';
 
@@ -757,6 +780,11 @@
     $('accessWarn').classList.toggle('hidden', allowed);
 
     if (!loadedOnce) { loadedOnce = true; await loadAll(); }
+  }
+
+  function showSyncWarning(text) {
+    $('syncText').textContent = text;
+    $('syncWarn').classList.remove('hidden');
   }
 
   // ---------- Tabs ----------
@@ -771,17 +799,31 @@
 
   // ---------- Data ----------
   async function loadAll() {
+    // If the sign-in has expired, the database returns empty lists without an error.
+    // Check first so we show the sign-in screen instead of looking like the data was lost.
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { render(null); return; }
+
     const [p, c, s] = await Promise.all([
       sb.from('products').select('*').order('name'),
       sb.from('purchases').select('*, products(name, brand, photo_url)').order('bought_on', { ascending: false }),
       sb.from('shops').select('*').order('name')
     ]);
     if (p.error || c.error) {
-      alert('Could not load data: ' + (p.error || c.error).message);
+      showSyncWarning('Could not load your data: ' + (p.error || c.error).message);
       return;
     }
+
     products = p.data;
     purchases = c.data;
+
+    if (!products.length && !purchases.length && everLoaded) {
+      showSyncWarning('Nothing loaded. Your sign-in may have expired. Tap Sign in again to restore your list.');
+    } else {
+      $('syncWarn').classList.add('hidden');
+    }
+    if (products.length || purchases.length) everLoaded = true;
+
     if (s.error) {
       shops = [];
       renderAll();
@@ -1237,6 +1279,7 @@
       if (error) throw error;
 
       purchases.unshift(row);
+      everLoaded = true;
       $('purchaseForm').reset();
       $('pQty').value = '1';
       $('pDate').value = todayLocal();
@@ -1335,6 +1378,7 @@
 
       products.push(row);
       products.sort((a, b) => a.name.localeCompare(b.name));
+      everLoaded = true;
       $('productForm').reset();
       msg.textContent = 'Product added.';
       msg.className = 'ok';
